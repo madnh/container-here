@@ -1,0 +1,506 @@
+#!/bin/bash
+
+# Configuration file path
+CONFIG_DIR="$HOME/.config/container-here"
+CONFIG_FILE="$CONFIG_DIR/config"
+
+# Function to ensure config directory exists
+ensure_config_dir() {
+    if [[ ! -d "$CONFIG_DIR" ]]; then
+        mkdir -p "$CONFIG_DIR"
+    fi
+}
+
+# Function to read config value
+get_config_value() {
+    local key="$1"
+    local default_value="$2"
+    
+    if [[ -f "$CONFIG_FILE" ]]; then
+        local value
+        value=$(grep "^$key=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2- | head -n1)
+        if [[ -n "$value" ]]; then
+            echo "$value"
+            return 0
+        fi
+    fi
+    
+    echo "$default_value"
+}
+
+# Function to set config value
+set_config_value() {
+    local key="$1"
+    local value="$2"
+    
+    ensure_config_dir
+    
+    # Remove existing key if present
+    if [[ -f "$CONFIG_FILE" ]]; then
+        grep -v "^$key=" "$CONFIG_FILE" > "$CONFIG_FILE.tmp" 2>/dev/null || true
+        mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+    fi
+    
+    # Add new key=value
+    echo "$key=$value" >> "$CONFIG_FILE"
+}
+
+# Function to get image-specific home directory from config
+get_image_home() {
+    local image="$1"
+    local image_key="home_${image//[^a-zA-Z0-9]/_}"  # Replace non-alphanumeric with underscore
+    get_config_value "$image_key" ""
+}
+
+# Function to set image-specific home directory in config
+set_image_home() {
+    local image="$1"
+    local home_path="$2"
+    local image_key="home_${image//[^a-zA-Z0-9]/_}"  # Replace non-alphanumeric with underscore
+    set_config_value "$image_key" "$home_path"
+}
+
+# Function to list all config values
+list_config() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        echo "Current configuration:"
+        echo ""
+        echo "General settings:"
+        grep "^default_image=" "$CONFIG_FILE" 2>/dev/null || echo "default_image=alpine (default)"
+        echo ""
+        echo "Image-specific home directories:"
+        if grep "^home_" "$CONFIG_FILE" >/dev/null 2>&1; then
+            grep "^home_" "$CONFIG_FILE" | while IFS='=' read -r key value; do
+                # Convert key back to image name
+                image_name="${key#home_}"
+                # Convert first underscore back to colon (for tags like node:18 -> node_18)
+                if [[ "$image_name" =~ ^([^_]+)_([0-9]+)$ ]]; then
+                    image_name="${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"
+                fi
+                # Convert remaining underscores to hyphens or other characters as needed
+                echo "  $image_name -> $value"
+            done
+        else
+            echo "  (none configured - will auto-detect)"
+        fi
+    else
+        echo "No configuration file found. Using defaults."
+    fi
+}
+
+# Function to show usage information
+show_usage() {
+    local script_name
+    script_name=$(basename "$0")
+    
+    echo "Usage: $script_name [OPTIONS] [CONTAINER_NAME]"
+    echo ""
+    echo "Quick create container with auto mount working dir."
+    echo ""
+    echo "Arguments:"
+    echo "  CONTAINER_NAME    Name for the container (default: current folder name)"
+    echo ""
+    echo "Options:"
+    echo "  --image IMAGE     Docker image to use (default: from config or alpine)"
+    echo "  --home PATH       Container home directory to mount volume (default: auto-detect)"
+    echo "  --config          Show configuration management options"
+    echo "  -h, --help        Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $script_name                          # Use current folder name with default image"
+    echo "  $script_name my-app                   # Use 'my-app' as name with default image"
+    echo "  $script_name --image ubuntu my-app    # Use ubuntu image with 'my-app' as name"
+    echo "  $script_name --home /root my-app      # Mount volume to /root instead of auto-detected home"
+}
+
+# Function to show config management help
+show_config_help() {
+    local script_name
+    script_name=$(basename "$0")
+    
+    echo "Configuration Management:"
+    echo ""
+    echo "  $script_name --config set <key> <value>    Set a configuration value"
+    echo "  $script_name --config get <key>            Get a configuration value"
+    echo "  $script_name --config list                 List all configuration values"
+    echo ""
+    echo "Available configuration keys:"
+    echo "  default_image              Default Docker image to use (default: alpine)"
+    echo "  home <image> <path>        Set home directory for specific image"
+    echo ""
+    echo "Examples:"
+    echo "  $script_name --config set default_image ubuntu:22.04"
+    echo "  $script_name --config set home ubuntu /home/ubuntu"
+    echo "  $script_name --config set home alpine /root"
+    echo "  $script_name --config set home node:18 /home/node"
+    echo "  $script_name --config get default_image"
+    echo "  $script_name --config get home ubuntu"
+    echo "  $script_name --config list"
+}
+
+# Function to handle config commands
+handle_config_command() {
+    local action="$1"
+    shift
+    
+    case "$action" in
+        set)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: config set requires key and value"
+                echo "Usage: --config set <key> <value>"
+                echo "       --config set home <image> <path>"
+                exit 1
+            fi
+            local key="$1"
+            
+            case "$key" in
+                default_image)
+                    if [[ $# -ne 2 ]]; then
+                        echo "Error: default_image requires exactly one value"
+                        echo "Usage: --config set default_image <image>"
+                        exit 1
+                    fi
+                    local value="$2"
+                    set_config_value "$key" "$value"
+                    echo "Set $key = $value"
+                    ;;
+                home)
+                    if [[ $# -ne 3 ]]; then
+                        echo "Error: home requires image and path"
+                        echo "Usage: --config set home <image> <path>"
+                        exit 1
+                    fi
+                    local image="$2"
+                    local path="$3"
+                    set_image_home "$image" "$path"
+                    echo "Set home directory for '$image' = $path"
+                    ;;
+                *)
+                    echo "Error: Unknown configuration key '$key'"
+                    echo "Available keys: default_image, home"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        get)
+            if [[ $# -lt 1 ]]; then
+                echo "Error: config get requires a key"
+                echo "Usage: --config get <key>"
+                echo "       --config get home <image>"
+                exit 1
+            fi
+            local key="$1"
+            local value
+            
+            case "$key" in
+                default_image)
+                    if [[ $# -ne 1 ]]; then
+                        echo "Error: default_image takes no additional arguments"
+                        echo "Usage: --config get default_image"
+                        exit 1
+                    fi
+                    value=$(get_config_value "$key" "alpine")
+                    echo "$value"
+                    ;;
+                home)
+                    if [[ $# -ne 2 ]]; then
+                        echo "Error: home requires an image name"
+                        echo "Usage: --config get home <image>"
+                        exit 1
+                    fi
+                    local image="$2"
+                    value=$(get_image_home "$image")
+                    if [[ -n "$value" ]]; then
+                        echo "$value"
+                    else
+                        echo "No home directory configured for '$image' (will auto-detect)"
+                    fi
+                    ;;
+                *)
+                    echo "Error: Unknown configuration key '$key'"
+                    echo "Available keys: default_image, home"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        list)
+            list_config
+            ;;
+        *)
+            echo "Error: Unknown config action '$action'"
+            show_config_help
+            exit 1
+            ;;
+    esac
+}
+
+# Function to parse command line arguments
+parse_arguments() {
+    # Get defaults from config
+    DOCKER_IMAGE=$(get_config_value "default_image" "alpine")
+    CONTAINER_HOME_ARG=""
+    CONTAINER_NAME_ARG=""
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --image)
+                DOCKER_IMAGE="$2"
+                shift 2
+                ;;
+            --home)
+                CONTAINER_HOME_ARG="$2"
+                shift 2
+                ;;
+            --config)
+                if [[ $# -eq 1 ]]; then
+                    show_config_help
+                    exit 0
+                fi
+                shift
+                handle_config_command "$@"
+                exit 0
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            -*)
+                echo "Error: Unknown option $1"
+                show_usage
+                exit 1
+                ;;
+            *)
+                if [[ -z "$CONTAINER_NAME_ARG" ]]; then
+                    CONTAINER_NAME_ARG="$1"
+                else
+                    echo "Error: Multiple container names specified"
+                    show_usage
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+}
+
+# Function to check if Docker image exists locally
+check_image_exists_locally() {
+    local image="$1"
+    docker image inspect "$image" >/dev/null 2>&1
+}
+
+# Function to check if image exists on Docker Hub
+check_image_on_dockerhub() {
+    local image="$1"
+    local repo_name
+    local tag="latest"
+    
+    # Parse image name and tag
+    if [[ "$image" == *":"* ]]; then
+        repo_name="${image%:*}"
+        tag="${image#*:}"
+    else
+        repo_name="$image"
+    fi
+    
+    # Handle official images (no namespace)
+    if [[ "$repo_name" != *"/"* ]]; then
+        repo_name="library/$repo_name"
+    fi
+    
+    # Check Docker Hub API
+    local url="https://hub.docker.com/v2/repositories/$repo_name/tags/$tag"
+    local response
+    response=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)
+    
+    if [[ "$response" == "200" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to get Docker Hub URL for image
+get_dockerhub_url() {
+    local image="$1"
+    local repo_name
+    
+    # Parse image name (remove tag)
+    if [[ "$image" == *":"* ]]; then
+        repo_name="${image%:*}"
+    else
+        repo_name="$image"
+    fi
+    
+    # Handle official images
+    if [[ "$repo_name" != *"/"* ]]; then
+        echo "https://hub.docker.com/_/$repo_name"
+    else
+        echo "https://hub.docker.com/r/$repo_name"
+    fi
+}
+
+# Function to validate and prepare Docker image
+validate_and_prepare_image() {
+    local image="$1"
+    
+    echo "Checking Docker image: $image"
+    
+    # Check if image exists locally
+    if check_image_exists_locally "$image"; then
+        echo "✓ Image '$image' found locally"
+        return 0
+    fi
+    
+    echo "Image '$image' not found locally, checking Docker Hub..."
+    
+    # Check if image exists on Docker Hub
+    if check_image_on_dockerhub "$image"; then
+        local hub_url
+        hub_url=$(get_dockerhub_url "$image")
+        echo "✓ Image '$image' found on Docker Hub"
+        echo "Docker Hub URL: $hub_url"
+        echo ""
+        
+        # Ask user for confirmation
+        read -p "Do you want to pull this image? (y/N): " -r
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "Pulling image '$image'..."
+            if docker pull "$image"; then
+                echo "✓ Image '$image' pulled successfully"
+                return 0
+            else
+                echo "✗ Failed to pull image '$image'"
+                return 1
+            fi
+        else
+            echo "Image pull cancelled by user"
+            return 1
+        fi
+    else
+        echo "✗ Image '$image' not found on Docker Hub"
+        echo "Please check the image name and try again."
+        echo "You can search for images at: https://hub.docker.com"
+        return 1
+    fi
+}
+
+# Function to detect home folder in container
+detect_home_folder() {
+  local container_name="$1"
+  local home_folder
+
+  # Try to get HOME environment variable from container
+  home_folder=$(docker exec "$container_name" sh -c 'echo $HOME' 2>/dev/null)
+
+  # Check if home folder is valid (exists and starts with /home/)
+  if [ -n "$home_folder" ] && [[ "$home_folder" == /home/* ]] && docker exec "$container_name" test -d "$home_folder" 2>/dev/null; then
+    echo "$home_folder"
+  else
+    echo "/user-home"
+  fi
+}
+
+# Parse command line arguments and set defaults
+if [[ "$BATS_TEST_MODE" != "1" ]]; then
+    parse_arguments "$@"
+else
+    # Set defaults for test mode
+    DOCKER_IMAGE=$(get_config_value "default_image" "alpine")
+    CONTAINER_HOME_ARG=""
+    CONTAINER_NAME_ARG=""
+fi
+
+# Get base name from argument or use current folder name
+BASE_NAME=${CONTAINER_NAME_ARG:-$(basename "$(pwd)")}
+CONTAINER_NAME="container-here-$BASE_NAME"
+
+# Exit early if in test mode (after variable definitions)
+if [[ "$BATS_TEST_MODE" == "1" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+# Validate and prepare the Docker image
+if ! validate_and_prepare_image "$DOCKER_IMAGE"; then
+    echo "Exiting due to image validation failure."
+    exit 1
+fi
+
+# Check if container already exists
+if docker ps -a --format "table {{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
+  echo "Container '$CONTAINER_NAME' already exists."
+  echo "What would you like to do?"
+  echo "1) Exit"
+  echo "2) Remove old container and create new one"
+  echo "3) Use existing container"
+  read -p "Choose option (1-3): " choice
+
+  case $choice in
+  1)
+    echo "Exiting..."
+    exit 0
+    ;;
+  2)
+    echo "Removing existing container..."
+    docker rm -f "$CONTAINER_NAME"
+    ;;
+  3)
+    echo "Using existing container..."
+    if docker ps --format "table {{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
+      echo "Container is already running. Attaching to it..."
+      # Detect configured shell or fallback to /bin/bash
+      SHELL_CMD=$(docker exec "$CONTAINER_NAME" sh -c 'echo $SHELL' 2>/dev/null || echo "/bin/bash")
+      if [ -z "$SHELL_CMD" ] || ! docker exec "$CONTAINER_NAME" test -x "$SHELL_CMD" 2>/dev/null; then
+        SHELL_CMD="/bin/bash"
+      fi
+      docker exec -it "$CONTAINER_NAME" "$SHELL_CMD"
+    else
+      echo "Starting existing container..."
+      docker start -ai "$CONTAINER_NAME"
+    fi
+    exit 0
+    ;;
+  *)
+    echo "Invalid option. Exiting..."
+    exit 1
+    ;;
+  esac
+fi
+
+# Create docker volume if it doesn't exist
+if ! docker volume ls | grep -q "container-here-home"; then
+  echo "Creating docker volume: container-here-home"
+  docker volume create container-here-home
+else
+  echo "Docker volume container-here-home already exists"
+fi
+
+# Determine home folder to use
+if [[ -n "$CONTAINER_HOME_ARG" ]]; then
+    HOME_FOLDER="$CONTAINER_HOME_ARG"
+    echo "Using custom home folder: $HOME_FOLDER"
+else
+    # Check if image-specific home is configured
+    IMAGE_HOME=$(get_image_home "$DOCKER_IMAGE")
+    if [[ -n "$IMAGE_HOME" ]]; then
+        HOME_FOLDER="$IMAGE_HOME"
+        echo "Using configured home folder for '$DOCKER_IMAGE': $HOME_FOLDER"
+    else
+        # Detect home folder by creating a temporary container
+        echo "Detecting home folder in container image..."
+        TEMP_CONTAINER="container-here-temp-$(date +%s)"
+        docker run --name "$TEMP_CONTAINER" "$DOCKER_IMAGE" echo "temp" >/dev/null 2>&1
+        HOME_FOLDER=$(detect_home_folder "$TEMP_CONTAINER")
+        docker rm "$TEMP_CONTAINER" >/dev/null 2>&1
+        echo "Using detected home folder: $HOME_FOLDER"
+    fi
+fi
+echo "Using Docker image: $DOCKER_IMAGE"
+
+# Create and run docker container
+echo "Creating container: $CONTAINER_NAME"
+docker run -it --rm \
+  --name "$CONTAINER_NAME" \
+  -v "$(pwd):/app" \
+  -v "container-here-home:$HOME_FOLDER" \
+  "$DOCKER_IMAGE"
