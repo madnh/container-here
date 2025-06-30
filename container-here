@@ -75,6 +75,8 @@ show_usage() {
   echo ""
   echo "Options:"
   echo "  --image IMAGE     Docker image to use (default: from config or alpine)"
+  echo "  --list            List all container-here containers and their status"
+  echo "  --attach NAME     Attach to existing container by name"
   echo "  --config          Show configuration management options"
   echo "  view-scripts      View content of the scripts volume using temporary Alpine container"
   echo "  -h, --help        Show this help message"
@@ -83,6 +85,8 @@ show_usage() {
   echo "  $script_name                          # Use current folder name with default image"
   echo "  $script_name my-app                   # Use 'my-app' as name with default image"
   echo "  $script_name --image ubuntu my-app    # Use ubuntu image with 'my-app' as name"
+  echo "  $script_name --list                   # List all container-here containers"
+  echo "  $script_name --attach my-app          # Attach to existing 'my-app' container"
   echo "  $script_name view-scripts             # View content of scripts volume in temporary container"
 }
 
@@ -201,6 +205,20 @@ parse_arguments() {
       ;;
     view-scripts | --view-scripts)
       view_scripts_volume
+      exit 0
+      ;;
+    --list)
+      list_containers
+      exit 0
+      ;;
+    --attach)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --attach requires a container name"
+        echo "Usage: container-here --attach <name>"
+        exit 1
+      fi
+      shift
+      attach_to_container "$1"
       exit 0
       ;;
     -h | --help)
@@ -330,6 +348,86 @@ validate_and_prepare_image() {
 
 
 
+# Function to list all container-here containers
+list_containers() {
+  echo "Container-here containers:"
+  echo ""
+  
+  # Get all container names with prefix
+  local container_names
+  container_names=$(docker ps -a --format "{{.Names}}" --filter "name=container-here-" 2>/dev/null)
+  
+  if [ -z "$container_names" ]; then
+    echo "No container-here containers found."
+    echo "Run 'container-here [name]' to create your first container."
+    return 0
+  fi
+  
+  echo "NAME                    STATUS                  MOUNTED DIRECTORY"
+  
+  # Process each container
+  for container_name in $container_names; do
+    # Extract base name by removing "container-here-" prefix
+    base_name="${container_name#container-here-}"
+    
+    # Get container status
+    status=$(docker ps -a --format "{{.Status}}" --filter "name=^$container_name$" 2>/dev/null)
+    
+    # Get the mounted directory from container inspect
+    mounted_dir=$(docker inspect "$container_name" --format '{{range .Mounts}}{{if eq .Destination "/app"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
+    
+    # If we can't get the mount info, show "Unknown"
+    if [ -z "$mounted_dir" ]; then
+      mounted_dir="Unknown"
+    fi
+    
+    printf "%-22s %-22s %s\n" "$base_name" "$status" "$mounted_dir"
+  done
+  
+  echo ""
+  echo "To attach to a container: container-here --attach <name>"
+  echo "To create a new container: container-here [name]"
+}
+
+# Function to attach to existing container
+attach_to_container() {
+  local base_name="$1"
+  
+  if [ -z "$base_name" ]; then
+    echo "Error: --attach requires a container name"
+    echo "Usage: container-here --attach <name>"
+    echo ""
+    echo "Available containers:"
+    list_containers
+    exit 1
+  fi
+  
+  local container_name="container-here-$base_name"
+  
+  # Check if container exists
+  if ! docker ps -a --format "{{.Names}}" | grep -q "^$container_name$"; then
+    echo "Error: Container '$base_name' not found."
+    echo ""
+    echo "Available containers:"
+    list_containers
+    exit 1
+  fi
+  
+  # Check if container is running
+  if docker ps --format "{{.Names}}" | grep -q "^$container_name$"; then
+    echo "Attaching to running container '$base_name'..."
+    # Detect configured shell or fallback to /bin/bash
+    SHELL_CMD=$(docker exec "$container_name" sh -c 'echo $SHELL' 2>/dev/null || echo "/bin/bash")
+    if [ -z "$SHELL_CMD" ] || ! docker exec "$container_name" test -x "$SHELL_CMD" 2>/dev/null; then
+      SHELL_CMD="/bin/bash"
+    fi
+    docker exec -it "$container_name" "$SHELL_CMD"
+  else
+    echo "Starting and attaching to container '$base_name'..."
+    docker start -ai "$container_name"
+  fi
+}
+
 # Function to view scripts volume content
 view_scripts_volume() {
   echo "Viewing scripts volume content..."
@@ -388,7 +486,12 @@ fi
 
 # Check if container already exists
 if docker ps -a --format "table {{.Names}}" | grep -q "^$CONTAINER_NAME$"; then
-  echo "Container '$CONTAINER_NAME' already exists."
+  # Get container status
+  container_status=$(docker ps -a --format "{{.Status}}" --filter "name=^$CONTAINER_NAME$")
+  
+  echo "Container '$BASE_NAME' already exists."
+  echo "Status: $container_status"
+  echo ""
   echo "What would you like to do?"
   echo "1) Exit"
   echo "2) Remove old container and create new one"
@@ -439,7 +542,7 @@ echo "Using Docker image: $DOCKER_IMAGE"
 # Create and run docker container
 echo "Creating container: $CONTAINER_NAME"
 echo "Mounting volume: container-here-user-scripts -> /user-scripts"
-docker run -it --rm \
+docker run -it \
   --name "$CONTAINER_NAME" \
   -v "$(pwd):/app" \
   -v "container-here-user-scripts:/user-scripts" \
