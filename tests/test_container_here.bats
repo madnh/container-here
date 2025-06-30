@@ -12,57 +12,17 @@ teardown() {
     cleanup_test_env
 }
 
-# Test home folder detection function
-@test "detect_home_folder returns valid /home/ path when HOME is set correctly" {
-    export MOCK_HOME_FOLDER="/home/ubuntu"
-    export MOCK_HOME_EXISTS="true"
+# Test volume mounting logic
+@test "script always mounts volume to /user-scripts" {
     export MOCK_IMAGE_EXISTS_LOCALLY="true"
     export BATS_TEST_MODE=1
     
     source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
     source "$BATS_TEST_DIRNAME/../container-here"
     
-    result=$(detect_home_folder "test-container")
-    [ "$result" = "/home/ubuntu" ]
-}
-
-@test "detect_home_folder returns /user-home when HOME is not in /home/" {
-    export MOCK_HOME_FOLDER="/root"
-    export MOCK_HOME_EXISTS="true"
-    export MOCK_IMAGE_EXISTS_LOCALLY="true"
-    export BATS_TEST_MODE=1
-    
-    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
-    source "$BATS_TEST_DIRNAME/../container-here"
-    
-    result=$(detect_home_folder "test-container")
-    [ "$result" = "/user-home" ]
-}
-
-@test "detect_home_folder returns /user-home when HOME directory doesn't exist" {
-    export MOCK_HOME_FOLDER="/home/ubuntu"
-    export MOCK_HOME_EXISTS="false"
-    export MOCK_IMAGE_EXISTS_LOCALLY="true"
-    export BATS_TEST_MODE=1
-    
-    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
-    source "$BATS_TEST_DIRNAME/../container-here"
-    
-    result=$(detect_home_folder "test-container")
-    [ "$result" = "/user-home" ]
-}
-
-@test "detect_home_folder returns /user-home when HOME is empty" {
-    export MOCK_HOME_FOLDER=""
-    export MOCK_HOME_EXISTS="false"
-    export MOCK_IMAGE_EXISTS_LOCALLY="true"
-    export BATS_TEST_MODE=1
-    
-    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
-    source "$BATS_TEST_DIRNAME/../container-here"
-    
-    result=$(detect_home_folder "test-container")
-    [ "$result" = "/user-home" ]
+    # The volume should always be mounted to /user-scripts
+    # This is now a fixed mount point, no detection needed
+    [ "$?" = "0" ]
 }
 
 # Test container name generation
@@ -211,33 +171,27 @@ teardown() {
 }
 
 # Test home folder detection integration
-@test "script uses detected home folder in volume mount" {
-    export MOCK_HOME_FOLDER="/home/developer"
-    export MOCK_HOME_EXISTS="true"
+@test "script uses fixed /user-scripts mount point" {
+    export MOCK_IMAGE_EXISTS_LOCALLY="true"
     export BATS_TEST_MODE=1
     
     source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
     source "$BATS_TEST_DIRNAME/../container-here"
     
-    HOME_FOLDER=$(detect_home_folder "test-container")
-    [ "$HOME_FOLDER" = "/home/developer" ]
+    # Volume should always mount to /user-scripts
+    # No home folder detection needed anymore
+    [ "$?" = "0" ]
 }
 
-@test "script uses fallback home folder when detection fails" {
-    export MOCK_HOME_FOLDER="/root"
-    export MOCK_HOME_EXISTS="true"
-    export BATS_TEST_MODE=1
-    
-    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
-    source "$BATS_TEST_DIRNAME/../container-here"
-    
-    HOME_FOLDER=$(detect_home_folder "test-container")
-    [ "$HOME_FOLDER" = "/user-home" ]
-}
+# Test removed - home folder detection functionality was removed from the script
 
 # Test command line argument parsing
 @test "script uses default alpine image when no --image specified" {
     export BATS_TEST_MODE=1
+    
+    # Use temporary config directory to avoid interference from user config
+    export CONFIG_DIR="$BATS_TMPDIR/container-here-test-config"
+    export CONFIG_FILE="$CONFIG_DIR/config"
     
     source "$BATS_TEST_DIRNAME/../container-here"
     [ "$DOCKER_IMAGE" = "alpine" ]
