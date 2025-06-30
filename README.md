@@ -65,6 +65,12 @@ container-here --help
 # Set defaults to avoid typing options every time
 ./container-here --config set default_image ubuntu:22.04
 ./container-here my-project  # Now uses ubuntu:22.04 automatically
+
+# List all your containers to see what's available
+./container-here --list
+
+# Quickly reconnect to any existing container
+./container-here --attach my-project
 ```
 
 ## Features
@@ -75,7 +81,10 @@ container-here --help
 - **✅ Image Validation**: Automatically checks if images exist locally or on Docker Hub
 - **📥 Smart Image Pulling**: Prompts user confirmation before pulling images from Docker Hub
 - **💾 Persistent Scripts Volume**: Creates and mounts `container-here-user-scripts` volume to `/user-scripts`
-- **📋 Container Management**: Handles existing containers with user-friendly options
+- **🔄 Container Persistence**: Containers persist after exit - no more lost work!
+- **📋 Container Management**: List, attach, and manage existing containers easily
+- **🔗 Quick Reconnection**: Attach to any existing container with `--attach` command
+- **📊 Status Monitoring**: View all containers with their status and mounted directories
 - **🐚 Shell Detection**: Automatically detects and uses container's configured shell
 
 ## Usage
@@ -95,6 +104,8 @@ Arguments:
 
 Options:
   --image IMAGE     Docker image to use (default: from config or alpine)
+  --list            List all container-here containers and their status
+  --attach NAME     Attach to existing container by name
   --config          Show configuration management options
   view-scripts      View content of the scripts volume using temporary Alpine container
   -h, --help        Show this help message
@@ -103,7 +114,8 @@ Examples:
   container-here                          # Use current folder name with default image
   container-here my-app                   # Use 'my-app' as name with default image
   container-here --image ubuntu my-app    # Use ubuntu image with 'my-app' as name
-  container-here --home /root my-app      # Mount volume to /root instead of auto-detected home
+  container-here --list                   # List all container-here containers
+  container-here --attach my-app          # Attach to existing 'my-app' container
 ```
 
 ### Basic Usage Examples
@@ -124,6 +136,12 @@ Examples:
 # Use Python image for data science work
 ./container-here --image python:3.11-slim data-analysis
 
+# List all your containers with their status and directories
+./container-here --list
+
+# Attach to an existing container (starts if stopped)
+./container-here --attach my-app
+
 # View scripts volume content
 ./container-here view-scripts
 ```
@@ -133,6 +151,8 @@ Examples:
 ### Main Options
 
 - `--image IMAGE`: Specify Docker image to use (default: from config or `alpine`)
+- `--list`: List all container-here containers with status and mounted directories
+- `--attach NAME`: Attach to existing container by name (starts if stopped)
 - `--config`: Show configuration management options or manage settings
 - `view-scripts`: View content of the scripts volume using temporary Alpine container
 - `-h, --help`: Show usage information
@@ -169,13 +189,52 @@ Pulling image 'python:3.11'...
 ✓ Image 'python:3.11' pulled successfully
 ```
 
-## Container Management
+## Container Persistence & Management
+
+### Container Persistence
+
+**🎉 New in latest version**: Containers now persist after you exit the shell! No more lost work when you accidentally exit.
+
+- Containers are created **without** the `--rm` flag, so they remain available after exit
+- All your work, installed packages, and configurations are preserved
+- Simply reconnect to continue where you left off
+
+### Container Management Commands
+
+#### List All Containers
+```bash
+./container-here --list
+```
+
+Example output:
+```
+Container-here containers:
+
+NAME                    STATUS                  MOUNTED DIRECTORY
+my-project             Up 2 hours              /Users/john/projects/my-project
+data-analysis          Exited (0) 5 minutes ago /Users/john/data/analysis
+web-dev                Up 1 day                /Users/john/sites/webapp
+
+To attach to a container: container-here --attach <name>
+To create a new container: container-here [name]
+```
+
+#### Attach to Existing Container
+```bash
+# Attach to a running container
+./container-here --attach my-project
+
+# Attach to a stopped container (automatically starts it)
+./container-here --attach data-analysis
+```
+
+### Existing Container Behavior
 
 When a container with the same name already exists, you'll be prompted with options:
 
 1. **Exit** - Stop the script
-2. **Remove old container** - Delete existing container and create new one
-3. **Use existing container** - Start/attach to existing container
+2. **Remove old container** - Delete existing container and create new one  
+3. **Use existing container** - Start/attach to existing container (shows current status)
 
 ## Configuration
 
@@ -371,6 +430,54 @@ tests/
 # Or override without changing defaults
 ./container-here --image rust:1.75 rust-project
 ./container-here --image openjdk:17 java-app
+```
+
+### Persistent Workflow Examples
+
+#### Daily Development Routine
+
+```bash
+# Monday: Start new project
+./container-here --image node:18 new-app
+# Install dependencies, write code, exit accidentally...
+
+# Tuesday: Continue where you left off
+./container-here --list
+# Shows: new-app | Exited (0) 16 hours ago | /Users/you/projects/new-app
+./container-here --attach new-app
+# Back to your environment with all packages still installed!
+
+# Wednesday: Check all active projects
+./container-here --list
+# Shows all containers with their directories and status
+```
+
+#### Project Switching
+
+```bash
+# Work on frontend (React)
+./container-here --attach frontend-app
+# Work for a while, then switch to backend
+
+# Switch to backend API (Python)  
+./container-here --attach api-server
+# Both environments stay ready with all your work preserved
+
+# Quick status check
+./container-here --list
+# See which projects are running vs stopped
+```
+
+#### Long-Running Development
+
+```bash
+# Start development environment
+./container-here --image ubuntu:22.04 dev-environment
+# Install tools, configure environment, set up dotfiles...
+
+# Weeks later, instantly return to configured environment
+./container-here --attach dev-environment
+# Everything exactly as you left it - no setup needed!
 ```
 
 ### Database and Services
