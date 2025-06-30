@@ -341,21 +341,25 @@ view_scripts_volume() {
     exit 1
   fi
 
+  # Get default image from config, fallback to alpine
+  local view_image
+  view_image=$(get_config_value "default_image" "alpine")
+
   # Create unique temporary container name
   local temp_container="container-here-view-$(date +%s)"
 
   echo "Creating temporary container to view scripts volume..."
   echo "Container name: $temp_container"
+  echo "Using image: $view_image"
   echo "Volume: container-here-user-scripts -> /user-scripts"
   echo ""
 
-  # Run temporary alpine container with volume mounted
+  # Run temporary container with volume mounted
   docker run -it --rm \
     --name "$temp_container" \
     -v "container-here-user-scripts:/user-scripts" \
     -w "/user-scripts" \
-    alpine:latest \
-    sh -c 'echo "=== User Scripts Volume Content ==="; echo "Working directory: $(pwd)"; echo ""; ls -la; echo ""; echo "You are now in the user scripts volume. Type \"exit\" to return."; /bin/sh'
+    "$view_image"
 }
 
 # Parse command line arguments and set defaults

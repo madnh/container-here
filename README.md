@@ -62,26 +62,19 @@ container-here --help
 # Use a specific Docker image
 ./container-here --image ubuntu:22.04 my-ubuntu-project
 
-# Use a custom home directory for volume mounting
-./container-here --home /root my-project
-
 # Set defaults to avoid typing options every time
 ./container-here --config set default_image ubuntu:22.04
-./container-here --config set home ubuntu /home/ubuntu
-./container-here --config set home alpine /root
-./container-here my-project  # Now uses ubuntu:22.04 with /home/ubuntu automatically
+./container-here my-project  # Now uses ubuntu:22.04 automatically
 ```
 
 ## Features
 
-- **🔧 Configuration Management**: Set default Docker images and home directories in `~/.config/container-here/config`
+- **🔧 Configuration Management**: Set default Docker images in `~/.config/container-here/config`
 - **🏷️ Smart Container Naming**: Uses first argument or current folder name with `container-here-` prefix
 - **🐳 Flexible Docker Images**: Specify any Docker image with `--image` option (default: from config or `alpine`)
-- **🏠 Custom Home Directory**: Specify container home directory with `--home` option (default: auto-detect or from config)
 - **✅ Image Validation**: Automatically checks if images exist locally or on Docker Hub
 - **📥 Smart Image Pulling**: Prompts user confirmation before pulling images from Docker Hub
-- **💾 Persistent Home Volume**: Creates and mounts `container-here-home` volume to container's home directory
-- **🔍 Home Directory Detection**: Automatically detects container's home directory or falls back to `/user-home`
+- **💾 Persistent Scripts Volume**: Creates and mounts `container-here-user-scripts` volume to `/user-scripts`
 - **📋 Container Management**: Handles existing containers with user-friendly options
 - **🐚 Shell Detection**: Automatically detects and uses container's configured shell
 
@@ -102,8 +95,8 @@ Arguments:
 
 Options:
   --image IMAGE     Docker image to use (default: from config or alpine)
-  --home PATH       Container home directory to mount volume (default: auto-detect)
   --config          Show configuration management options
+  view-scripts      View content of the scripts volume using temporary Alpine container
   -h, --help        Show this help message
 
 Examples:
@@ -131,11 +124,8 @@ Examples:
 # Use Python image for data science work
 ./container-here --image python:3.11-slim data-analysis
 
-# Use custom home directory for volume mounting
-./container-here --home /root my-app
-
-# Combine options
-./container-here --image ubuntu:22.04 --home /root server-setup
+# View scripts volume content
+./container-here view-scripts
 ```
 
 ## Command Line Reference
@@ -143,15 +133,15 @@ Examples:
 ### Main Options
 
 - `--image IMAGE`: Specify Docker image to use (default: from config or `alpine`)
-- `--home PATH`: Container home directory to mount volume (default: auto-detect or from config)
 - `--config`: Show configuration management options or manage settings
+- `view-scripts`: View content of the scripts volume using temporary Alpine container
 - `-h, --help`: Show usage information
 - `CONTAINER_NAME`: Optional container name (default: current folder name)
 
 ### Configuration Commands
 
 - `--config set <key> <value>`: Set a configuration value
-- `--config get <key>`: Get a configuration value  
+- `--config get <key>`: Get a configuration value
 - `--config list`: List all configuration values
 - `--config`: Show configuration help
 ## Image Validation Process
@@ -211,11 +201,7 @@ Available configuration keys:
 
 Examples:
   container-here --config set default_image ubuntu:22.04
-  container-here --config set home ubuntu /home/ubuntu
-  container-here --config set home alpine /root
-  container-here --config set home node:18 /home/node
   container-here --config get default_image
-  container-here --config get home ubuntu
   container-here --config list
 ```
 
@@ -225,18 +211,8 @@ Examples:
 # Set default Docker image
 ./container-here --config set default_image ubuntu:22.04
 
-# Set home directories for specific images
-./container-here --config set home ubuntu /home/ubuntu
-./container-here --config set home alpine /root
-./container-here --config set home node:18 /home/node
-./container-here --config set home python:3.11 /home/python
-
 # Get current default image
 ./container-here --config get default_image
-
-# Get home directory for specific image
-./container-here --config get home ubuntu
-./container-here --config get home node:18
 
 # List all configuration values
 ./container-here --config list
@@ -245,19 +221,12 @@ Examples:
 ### Available Configuration Keys
 
 - `default_image`: Default Docker image to use (default: `alpine`)
-- `home <image> <path>`: Set home directory for specific Docker image
 
-### Image-Specific Home Directories
+### Volume Mounting
 
-Different Docker images have different default users and home directories. Container Here allows you to configure the correct home directory for each image you use:
-
-- **Ubuntu images**: Usually `/home/ubuntu`
-- **Alpine images**: Usually `/root` 
-- **Node.js images**: Usually `/home/node`
-- **Python images**: Usually `/home/python` or `/root`
-- **Custom images**: Whatever path you specify
-
-When you configure home directories for specific images, Container Here will automatically use the correct path without you having to specify `--home` every time.
+Container Here automatically mounts:
+- Current working directory to `/app` in the container
+- Persistent volume `container-here-user-scripts` to `/user-scripts` for storing scripts and data across container sessions
 
 ### Configuration File Format
 
@@ -282,31 +251,20 @@ home_node_18=/home/node
 # 2. Verify the settings
 ./container-here --config get default_image
 # Output: ubuntu:22.04
-./container-here --config get home ubuntu
-# Output: /home/ubuntu
 
-# 3. Now containers use image-specific home directories automatically
-./container-here my-web-project                    # Uses ubuntu:22.04 with /home/ubuntu
-./container-here --image alpine alpine-tools      # Uses alpine with /root
-./container-here --image node:18 js-project       # Uses node:18 with /home/node
+# 3. Now containers use the configured default image automatically
+./container-here my-web-project                    # Uses ubuntu:22.04
+./container-here --image alpine alpine-tools      # Uses alpine
+./container-here --image node:18 js-project       # Uses node:18
 
-# 4. Override when needed for specific projects
-./container-here --home /custom/path my-project                    # Custom home, default image
-./container-here --image python:3.11 ml-project                   # Custom image, auto-detect home
-./container-here --image node:18 --home /app/workspace js-project # Both custom
-
-# 5. Add new image configurations as needed
-./container-here --config set home python:3.11 /home/python
-./container-here --config set home postgres:15 /var/lib/postgresql
-
-# 6. View all your settings
+# 4. View all your settings
 ./container-here --config list
 ```
 
 ## Volume Mounting
 
 - Current directory → `/app` (in container)
-- `container-here-home` volume → detected home directory (in container)
+- `container-here-user-scripts` volume → `/user-scripts` (in container)
 
 ## Testing
 
@@ -324,7 +282,7 @@ bats tests/test_container_here.bats -f "test name"
 
 ### Test Coverage
 
-- ✅ Home folder detection (valid paths, fallbacks)
+- ✅ Volume mounting logic
 - ✅ Container name generation
 - ✅ Container existence checking
 - ✅ Volume creation logic
