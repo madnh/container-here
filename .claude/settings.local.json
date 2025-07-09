@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(grep:*)",
-      "Bash(./container-here --help)"
+      "Bash(./container-here --help)",
+      "Bash(find:*)",
+      "Bash(./run-tests.sh)",
+      "Bash(./container-here --config list)",
+      "Bash(./container-here --debug --mount $HOME/.claude:/home/ubuntu/.claude)"
     ],
     "deny": []
   }
