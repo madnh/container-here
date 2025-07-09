@@ -96,6 +96,16 @@ teardown() {
     [[ "$output" == *"Docker volume container-here-home already exists"* ]]
 }
 
+# Test basic custom mount functionality
+@test "custom mount CLI array is properly initialized" {
+    export BATS_TEST_MODE=1
+    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    # Test that CLI_CUSTOM_MOUNTS array is initialized
+    [ "${#CLI_CUSTOM_MOUNTS[@]}" -eq 0 ]
+}
+
 # Test shell detection for existing containers
 @test "script detects valid shell in running container" {
     export MOCK_CONTAINER_RUNNING="true"
