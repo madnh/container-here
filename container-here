@@ -47,6 +47,78 @@ set_config_value() {
 
 
 
+# Function to parse custom mounts from config
+parse_custom_mounts() {
+  local mounts_config="$1"
+  
+  # Remove brackets and split by comma
+  mounts_config=$(echo "$mounts_config" | sed 's/^\[//; s/\]$//')
+  
+  # Parse each mount definition
+  echo "$mounts_config" | grep -o '{[^}]*}' | while read -r mount_def; do
+    # Extract host, container, and mode from JSON-like format
+    local host=$(echo "$mount_def" | sed -n 's/.*"host":"\([^"]*\)".*/\1/p')
+    local container=$(echo "$mount_def" | sed -n 's/.*"container":"\([^"]*\)".*/\1/p')
+    local mode=$(echo "$mount_def" | sed -n 's/.*"mode":"\([^"]*\)".*/\1/p')
+    
+    # Default to rw if mode not specified
+    if [[ -z "$mode" ]]; then
+      mode="rw"
+    fi
+    
+    # Validate mode
+    if [[ "$mode" != "rw" && "$mode" != "ro" ]]; then
+      echo "Error: Invalid mount mode '$mode'. Must be 'rw' or 'ro'" >&2
+      continue
+    fi
+    
+    # Validate paths
+    if [[ -z "$host" || -z "$container" ]]; then
+      echo "Error: Mount definition missing host or container path" >&2
+      continue
+    fi
+    
+    # Container path must be absolute
+    if [[ "$container" != /* ]]; then
+      echo "Error: Container path must be absolute: $container" >&2
+      continue
+    fi
+    
+    echo "$host:$container:$mode"
+  done
+}
+
+# Function to validate custom mount configuration
+validate_custom_mounts() {
+  local mounts_config="$1"
+  
+  # Check JSON-like format
+  if [[ ! "$mounts_config" =~ ^\[.*\]$ ]]; then
+    echo "Error: custom_mounts must be in format: [{\"host\":\"/path\",\"container\":\"/path\",\"mode\":\"rw\"}]"
+    return 1
+  fi
+  
+  # Parse and validate each mount
+  local temp_file=$(mktemp)
+  parse_custom_mounts "$mounts_config" > "$temp_file" 2>&1
+  
+  if grep -q "Error:" "$temp_file"; then
+    cat "$temp_file" >&2
+    rm "$temp_file"
+    return 1
+  fi
+  
+  # Check if any host paths don't exist
+  while IFS=':' read -r host container mode; do
+    if [[ -n "$host" && ! -e "$host" ]]; then
+      echo "Warning: Host path does not exist: $host" >&2
+    fi
+  done < "$temp_file"
+  
+  rm "$temp_file"
+  return 0
+}
+
 # Function to list all config values
 list_config() {
   if [[ -f "$CONFIG_FILE" ]]; then
@@ -55,7 +127,17 @@ list_config() {
     echo "General settings:"
     grep "^default_image=" "$CONFIG_FILE" 2>/dev/null || echo "default_image=alpine (default)"
     echo ""
+    echo "Mount settings:"
     echo "Volume mount point: /user-scripts (fixed)"
+    local custom_mounts=$(get_config_value "custom_mounts" "")
+    if [[ -n "$custom_mounts" ]]; then
+      echo "Custom mounts:"
+      parse_custom_mounts "$custom_mounts" | while IFS=':' read -r host container mode; do
+        echo "  $host -> $container ($mode)"
+      done
+    else
+      echo "custom_mounts=[] (default)"
+    fi
   else
     echo "No configuration file found. Using defaults."
   fi
@@ -75,8 +157,14 @@ show_usage() {
   echo ""
   echo "Options:"
   echo "  --image IMAGE     Docker image to use (default: from config or alpine)"
+  echo "  --mount PATH      Mount host path to container: /host/path:/container/path[:mode]"
+  echo "                    Mode can be 'rw' (read-write) or 'ro' (read-only). Default: rw"
+  echo "                    Can be used multiple times for multiple mounts"
+  echo "  --mount-ro PATH   Mount host path as read-only: /host/path:/container/path"
+  echo "                    Shorthand for --mount /host/path:/container/path:ro"
   echo "  --list            List all container-here containers and their status"
   echo "  --attach NAME     Attach to existing container by name"
+  echo "  --debug           Print the docker command instead of executing it"
   echo "  --config          Show configuration management options"
   echo "  view-scripts [OPTIONS]  View content of the scripts volume using temporary container"
   echo "    --alpine        Force use of Alpine image for viewing scripts"
@@ -87,6 +175,9 @@ show_usage() {
   echo "  $script_name                          # Use current folder name with default image"
   echo "  $script_name my-app                   # Use 'my-app' as name with default image"
   echo "  $script_name --image ubuntu my-app    # Use ubuntu image with 'my-app' as name"
+  echo "  $script_name --mount /data:/app/data my-app   # Mount /data to /app/data (read-write)"
+  echo "  $script_name --mount-ro /config:/app/config my-app # Mount /config to /app/config (read-only)"
+  echo "  $script_name --mount /data:/data:ro --mount /logs:/logs:rw my-app # Multiple mounts"
   echo "  $script_name --list                   # List all container-here containers"
   echo "  $script_name --attach my-app          # Attach to existing 'my-app' container"
   echo "  $script_name view-scripts             # View content of scripts volume (uses config default or alpine)"
@@ -107,10 +198,14 @@ show_config_help() {
   echo ""
   echo "Available configuration keys:"
   echo "  default_image              Default Docker image to use (default: alpine)"
+  echo "  custom_mounts              Custom mount definitions in JSON format"
+  echo "                            Format: [{\"host\":\"/path\",\"container\":\"/path\",\"mode\":\"rw|ro\"}]"
   echo ""
   echo "Examples:"
   echo "  $script_name --config set default_image ubuntu:22.04"
   echo "  $script_name --config get default_image"
+  echo "  $script_name --config set custom_mounts '[{\"host\":\"/data\",\"container\":\"/app/data\",\"mode\":\"rw\"}]'"
+  echo "  $script_name --config get custom_mounts"
   echo "  $script_name --config list"
 }
 
@@ -140,9 +235,25 @@ handle_config_command() {
       echo "Set $key = $value"
       ;;
 
+    custom_mounts)
+      if [[ $# -ne 2 ]]; then
+        echo "Error: custom_mounts requires exactly one value"
+        echo "Usage: --config set custom_mounts '[{\"host\":\"/path\",\"container\":\"/path\",\"mode\":\"rw\"}]'"
+        exit 1
+      fi
+      local value="$2"
+      if validate_custom_mounts "$value"; then
+        set_config_value "$key" "$value"
+        echo "Set $key = $value"
+      else
+        echo "Error: Invalid custom_mounts configuration"
+        exit 1
+      fi
+      ;;
+
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image, home"
+      echo "Available keys: default_image, custom_mounts"
       exit 1
       ;;
     esac
@@ -167,9 +278,19 @@ handle_config_command() {
       echo "$value"
       ;;
 
+    custom_mounts)
+      if [[ $# -ne 1 ]]; then
+        echo "Error: custom_mounts takes no additional arguments"
+        echo "Usage: --config get custom_mounts"
+        exit 1
+      fi
+      value=$(get_config_value "$key" "[]")
+      echo "$value"
+      ;;
+
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image, home"
+      echo "Available keys: default_image, custom_mounts"
       exit 1
       ;;
     esac
@@ -179,7 +300,7 @@ handle_config_command() {
     ;;
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image"
+      echo "Available keys: default_image, custom_mounts"
       exit 1
       ;;
   esac
@@ -229,11 +350,35 @@ parse_arguments() {
   # Get defaults from config
   DOCKER_IMAGE=$(get_config_value "default_image" "alpine")
   CONTAINER_NAME_ARG=""
+  # Array to store custom mounts from CLI
+  CLI_CUSTOM_MOUNTS=()
+  # Debug mode flag
+  DEBUG_MODE=false
 
   while [[ $# -gt 0 ]]; do
     case $1 in
     --image)
       DOCKER_IMAGE="$2"
+      shift 2
+      ;;
+
+    --mount)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --mount requires a value"
+        echo "Usage: --mount /host/path:/container/path[:mode]"
+        exit 1
+      fi
+      CLI_CUSTOM_MOUNTS+=("$2")
+      shift 2
+      ;;
+
+    --mount-ro)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --mount-ro requires a value"
+        echo "Usage: --mount-ro /host/path:/container/path"
+        exit 1
+      fi
+      CLI_CUSTOM_MOUNTS+=("$2:ro")
       shift 2
       ;;
 
@@ -264,6 +409,10 @@ parse_arguments() {
       shift
       attach_to_container "$1"
       exit 0
+      ;;
+    --debug)
+      DEBUG_MODE=true
+      shift
       ;;
     -h | --help)
       show_usage
@@ -472,6 +621,96 @@ attach_to_container() {
   fi
 }
 
+# Function to validate mount format
+validate_mount_format() {
+  local mount_spec="$1"
+  
+  # Check if format is host:container[:mode]
+  if [[ ! "$mount_spec" =~ ^[^:]+:[^:]+(:.*)?$ ]]; then
+    echo "Error: Invalid mount format '$mount_spec'. Expected format: /host/path:/container/path[:mode]"
+    return 1
+  fi
+  
+  # Parse components
+  local host_path=$(echo "$mount_spec" | cut -d':' -f1)
+  local container_path=$(echo "$mount_spec" | cut -d':' -f2)
+  local mode=$(echo "$mount_spec" | cut -d':' -f3)
+  
+  # Default mode if not specified
+  if [[ -z "$mode" ]]; then
+    mode="rw"
+  fi
+  
+  # Validate mode
+  if [[ "$mode" != "rw" && "$mode" != "ro" ]]; then
+    echo "Error: Invalid mount mode '$mode'. Must be 'rw' or 'ro'"
+    return 1
+  fi
+  
+  # Validate host path exists
+  if [[ ! -e "$host_path" ]]; then
+    echo "Error: Host path does not exist: $host_path"
+    return 1
+  fi
+  
+  # Validate container path is absolute
+  if [[ "$container_path" != /* ]]; then
+    echo "Error: Container path must be absolute: $container_path"
+    return 1
+  fi
+  
+  return 0
+}
+
+# Function to build mount arguments for docker run
+build_mount_args() {
+  local -a mount_args=()
+  
+  # Always add default mounts
+  mount_args+=("-v" "$(pwd):/app")
+  mount_args+=("-v" "container-here-user-scripts:/user-scripts")
+  
+  # Add custom mounts from config
+  local custom_mounts=$(get_config_value "custom_mounts" "[]")
+  if [[ "$custom_mounts" != "[]" ]]; then
+    local temp_file=$(mktemp)
+    parse_custom_mounts "$custom_mounts" > "$temp_file"
+    
+    while IFS=':' read -r host container mode; do
+      if [[ -n "$host" && -n "$container" ]]; then
+        mount_args+=("-v" "$host:$container:$mode")
+      fi
+    done < "$temp_file"
+    
+    rm "$temp_file"
+  fi
+  
+  # Add CLI custom mounts (override config)
+  if [[ ${#CLI_CUSTOM_MOUNTS[@]} -gt 0 ]]; then
+    for mount_spec in "${CLI_CUSTOM_MOUNTS[@]}"; do
+      if validate_mount_format "$mount_spec"; then
+        # Parse mount spec
+        local host_path=$(echo "$mount_spec" | cut -d':' -f1)
+        local container_path=$(echo "$mount_spec" | cut -d':' -f2)
+        local mode=$(echo "$mount_spec" | cut -d':' -f3)
+        
+        # Default mode if not specified
+        if [[ -z "$mode" ]]; then
+          mode="rw"
+        fi
+        
+        mount_args+=("-v" "$host_path:$container_path:$mode")
+      else
+        echo "Exiting due to invalid mount specification."
+        exit 1
+      fi
+    done
+  fi
+  
+  # Output mount arguments
+  printf '%s\n' "${mount_args[@]}"
+}
+
 # Function to view scripts volume content
 view_scripts_volume() {
   local view_image="$1"
@@ -542,6 +781,7 @@ else
   # Set defaults for test mode
   DOCKER_IMAGE=$(get_config_value "default_image" "alpine")
   CONTAINER_NAME_ARG=""
+  CLI_CUSTOM_MOUNTS=()
 fi
 
 # Get base name from argument or use current folder name
@@ -616,9 +856,55 @@ echo "Using Docker image: $DOCKER_IMAGE"
 
 # Create and run docker container
 echo "Creating container: $CONTAINER_NAME"
-echo "Mounting volume: container-here-user-scripts -> /user-scripts"
-docker run -it \
-  --name "$CONTAINER_NAME" \
-  -v "$(pwd):/app" \
-  -v "container-here-user-scripts:/user-scripts" \
-  "$DOCKER_IMAGE"
+
+# Build mount arguments
+MOUNT_ARGS=()
+while IFS= read -r line; do
+  MOUNT_ARGS+=("$line")
+done < <(build_mount_args)
+
+# Display mount information
+echo "Mount configuration:"
+echo "  $(pwd) -> /app (rw)"
+echo "  container-here-user-scripts -> /user-scripts (rw)"
+
+# Show custom mounts from config
+custom_mounts=$(get_config_value "custom_mounts" "[]")
+if [[ "$custom_mounts" != "[]" ]]; then
+  echo "Custom mounts from config:"
+  parse_custom_mounts "$custom_mounts" | while IFS=':' read -r host container mode; do
+    if [[ -n "$host" && -n "$container" ]]; then
+      echo "  $host -> $container ($mode)"
+    fi
+  done
+fi
+
+# Show CLI custom mounts
+if [[ ${#CLI_CUSTOM_MOUNTS[@]} -gt 0 ]]; then
+  echo "Custom mounts from CLI:"
+  for mount_spec in "${CLI_CUSTOM_MOUNTS[@]}"; do
+    host_path=$(echo "$mount_spec" | cut -d':' -f1)
+    container_path=$(echo "$mount_spec" | cut -d':' -f2)
+    mode=$(echo "$mount_spec" | cut -d':' -f3)
+    if [[ -z "$mode" ]]; then
+      mode="rw"
+    fi
+    echo "  $host_path -> $container_path ($mode)"
+  done
+fi
+
+if [[ "$DEBUG_MODE" == "true" ]]; then
+  echo ""
+  echo "Debug: Docker command that would be executed:"
+  echo "docker run -it \\"
+  echo "  --name \"$CONTAINER_NAME\" \\"
+  for arg in "${MOUNT_ARGS[@]}"; do
+    echo "  \"$arg\" \\"
+  done
+  echo "  \"$DOCKER_IMAGE\""
+else
+  docker run -it \
+    --name "$CONTAINER_NAME" \
+    "${MOUNT_ARGS[@]}" \
+    "$DOCKER_IMAGE"
+fi
