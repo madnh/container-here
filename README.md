@@ -75,12 +75,13 @@ container-here --help
 
 ## Features
 
-- **🔧 Configuration Management**: Set default Docker images in `~/.config/container-here/config`
+- **🔧 Configuration Management**: Set default Docker images and custom mount paths in `~/.config/container-here/config`
 - **🏷️ Smart Container Naming**: Uses first argument or current folder name with `container-here-` prefix
 - **🐳 Flexible Docker Images**: Specify any Docker image with `--image` option (default: from config or `alpine`)
 - **✅ Image Validation**: Automatically checks if images exist locally or on Docker Hub
 - **📥 Smart Image Pulling**: Prompts user confirmation before pulling images from Docker Hub
 - **💾 Persistent Scripts Volume**: Creates and mounts `container-here-user-scripts` volume to `/user-scripts`
+- **📁 Custom Mount Paths**: Mount host directories with configurable read-only/read-write permissions
 - **🔄 Container Persistence**: Containers persist after exit - no more lost work!
 - **📋 Container Management**: List, attach, and manage existing containers easily
 - **🔗 Quick Reconnection**: Attach to any existing container with `--attach` command
@@ -97,25 +98,38 @@ container-here --help
 ```
 Usage: container-here [OPTIONS] [CONTAINER_NAME]
 
-Create and manage Docker containers for development environments.
+Quick create container with auto mount working dir.
 
 Arguments:
   CONTAINER_NAME    Name for the container (default: current folder name)
 
 Options:
   --image IMAGE     Docker image to use (default: from config or alpine)
+  --mount PATH      Mount host path to container: /host/path:/container/path[:mode]
+                    Mode can be 'rw' (read-write) or 'ro' (read-only). Default: rw
+                    Can be used multiple times for multiple mounts
+  --mount-ro PATH   Mount host path as read-only: /host/path:/container/path
+                    Shorthand for --mount /host/path:/container/path:ro
   --list            List all container-here containers and their status
   --attach NAME     Attach to existing container by name
   --config          Show configuration management options
-  view-scripts      View content of the scripts volume using temporary Alpine container
+  view-scripts [OPTIONS]  View content of the scripts volume using temporary container
+    --alpine        Force use of Alpine image for viewing scripts
+    --image IMAGE   Use specific image for viewing scripts
   -h, --help        Show this help message
 
 Examples:
   container-here                          # Use current folder name with default image
   container-here my-app                   # Use 'my-app' as name with default image
   container-here --image ubuntu my-app    # Use ubuntu image with 'my-app' as name
+  container-here --mount /data:/app/data my-app   # Mount /data to /app/data (read-write)
+  container-here --mount-ro /config:/app/config my-app # Mount /config to /app/config (read-only)
+  container-here --mount /data:/data:ro --mount /logs:/logs:rw my-app # Multiple mounts
   container-here --list                   # List all container-here containers
   container-here --attach my-app          # Attach to existing 'my-app' container
+  container-here view-scripts             # View content of scripts volume (uses config default or alpine)
+  container-here view-scripts --alpine   # View scripts using Alpine image
+  container-here view-scripts --image ubuntu:22.04  # View scripts using Ubuntu image
 ```
 
 ### Basic Usage Examples
@@ -136,6 +150,15 @@ Examples:
 # Use Python image for data science work
 ./container-here --image python:3.11-slim data-analysis
 
+# Mount additional directories for data access
+./container-here --mount /home/user/data:/app/data my-app
+
+# Mount configuration files as read-only
+./container-here --mount-ro /etc/myconfig:/app/config my-app
+
+# Multiple custom mounts with different permissions
+./container-here --mount /home/user/data:/app/data:rw --mount-ro /home/user/config:/app/config my-app
+
 # List all your containers with their status and directories
 ./container-here --list
 
@@ -151,10 +174,18 @@ Examples:
 ### Main Options
 
 - `--image IMAGE`: Specify Docker image to use (default: from config or `alpine`)
+- `--mount PATH`: Mount host path to container with format `/host/path:/container/path[:mode]`
+  - Mode can be `rw` (read-write) or `ro` (read-only)
+  - Default mode is `rw` if not specified
+  - Can be used multiple times for multiple mounts
+- `--mount-ro PATH`: Mount host path as read-only with format `/host/path:/container/path`
+  - Shorthand for `--mount /host/path:/container/path:ro`
 - `--list`: List all container-here containers with status and mounted directories
 - `--attach NAME`: Attach to existing container by name (starts if stopped)
 - `--config`: Show configuration management options or manage settings
-- `view-scripts`: View content of the scripts volume using temporary Alpine container
+- `view-scripts [OPTIONS]`: View content of the scripts volume using temporary container
+  - `--alpine`: Force use of Alpine image for viewing scripts
+  - `--image IMAGE`: Use specific image for viewing scripts
 - `-h, --help`: Show usage information
 - `CONTAINER_NAME`: Optional container name (default: current folder name)
 
@@ -256,11 +287,14 @@ Configuration Management:
 
 Available configuration keys:
   default_image              Default Docker image to use (default: alpine)
-  home <image> <path>        Set home directory for specific image
+  custom_mounts              Custom mount definitions in JSON format
+                            Format: [{"host":"/path","container":"/path","mode":"rw|ro"}]
 
 Examples:
   container-here --config set default_image ubuntu:22.04
   container-here --config get default_image
+  container-here --config set custom_mounts '[{"host":"/data","container":"/app/data","mode":"rw"}]'
+  container-here --config get custom_mounts
   container-here --config list
 ```
 
@@ -280,12 +314,19 @@ Examples:
 ### Available Configuration Keys
 
 - `default_image`: Default Docker image to use (default: `alpine`)
+- `custom_mounts`: Custom mount definitions in JSON format for persistent mount configurations
 
 ### Volume Mounting
 
 Container Here automatically mounts:
-- Current working directory to `/app` in the container
-- Persistent volume `container-here-user-scripts` to `/user-scripts` for storing scripts and data across container sessions
+- Current working directory to `/app` in the container (read-write)
+- Persistent volume `container-here-user-scripts` to `/user-scripts` for storing scripts and data across container sessions (read-write)
+
+Additionally, you can configure custom mounts:
+- **Via CLI flags**: Use `--mount` and `--mount-ro` flags for one-time custom mounts
+- **Via configuration**: Set persistent custom mounts using the `custom_mounts` configuration key
+- **Mount modes**: Support for both read-write (`rw`) and read-only (`ro`) permissions
+- **Path validation**: Automatic validation of host paths (must exist) and container paths (must be absolute)
 
 ### Configuration File Format
 
@@ -293,9 +334,7 @@ The configuration file uses a simple `key=value` format:
 
 ```
 default_image=ubuntu:22.04
-home_ubuntu=/home/ubuntu
-home_alpine=/root
-home_node_18=/home/node
+custom_mounts=[{"host":"/home/user/data","container":"/app/data","mode":"rw"},{"host":"/etc/configs","container":"/app/config","mode":"ro"}]
 ```
 
 ### Configuration Workflow Examples
@@ -303,18 +342,19 @@ home_node_18=/home/node
 ```bash
 # 1. Set your preferred defaults (one-time setup)
 ./container-here --config set default_image ubuntu:22.04
-./container-here --config set home ubuntu /home/ubuntu
-./container-here --config set home alpine /root
-./container-here --config set home node:18 /home/node
+./container-here --config set custom_mounts '[{"host":"/home/user/data","container":"/app/data","mode":"rw"}]'
 
 # 2. Verify the settings
 ./container-here --config get default_image
 # Output: ubuntu:22.04
 
-# 3. Now containers use the configured default image automatically
-./container-here my-web-project                    # Uses ubuntu:22.04
-./container-here --image alpine alpine-tools      # Uses alpine
-./container-here --image node:18 js-project       # Uses node:18
+./container-here --config get custom_mounts
+# Output: [{"host":"/home/user/data","container":"/app/data","mode":"rw"}]
+
+# 3. Now containers use the configured defaults automatically
+./container-here my-web-project                    # Uses ubuntu:22.04 with custom mounts
+./container-here --image alpine alpine-tools      # Uses alpine with custom mounts
+./container-here --mount /tmp/logs:/logs my-app    # Overrides config mounts with CLI mounts
 
 # 4. View all your settings
 ./container-here --config list
@@ -322,8 +362,41 @@ home_node_18=/home/node
 
 ## Volume Mounting
 
-- Current directory → `/app` (in container)
-- `container-here-user-scripts` volume → `/user-scripts` (in container)
+### Default Mounts
+- Current directory → `/app` (in container, read-write)
+- `container-here-user-scripts` volume → `/user-scripts` (in container, read-write)
+
+### Custom Mount Options
+
+#### CLI Mount Flags
+```bash
+# Mount directory with read-write access
+./container-here --mount /host/data:/container/data my-app
+
+# Mount directory as read-only
+./container-here --mount-ro /host/configs:/container/configs my-app
+
+# Multiple mounts with mixed permissions
+./container-here --mount /data:/app/data:rw --mount-ro /configs:/app/config my-app
+```
+
+#### Configuration-Based Mounts
+```bash
+# Set persistent custom mounts
+./container-here --config set custom_mounts '[
+  {"host":"/home/user/projects","container":"/workspace","mode":"rw"},
+  {"host":"/etc/ssl/certs","container":"/app/certs","mode":"ro"}
+]'
+
+# All future containers will use these mounts automatically
+./container-here my-project
+```
+
+#### Mount Validation
+- **Host paths**: Must exist on the host system
+- **Container paths**: Must be absolute paths (start with `/`)
+- **Mount modes**: Only `rw` (read-write) and `ro` (read-only) are supported
+- **CLI override**: CLI mount flags override configuration-based mounts
 
 ## Testing
 
@@ -342,16 +415,18 @@ bats tests/test_container_here.bats -f "test name"
 ### Test Coverage
 
 - ✅ Volume mounting logic
+- ✅ Custom mount path functionality
 - ✅ Container name generation
 - ✅ Container existence checking
 - ✅ Volume creation logic
 - ✅ User input handling
 - ✅ Shell detection for existing containers
-- ✅ Command line argument parsing (`--image`, `--help`)
+- ✅ Command line argument parsing (`--image`, `--mount`, `--mount-ro`, `--help`)
 - ✅ Error handling for invalid options
 - ✅ Image validation (local and Docker Hub checks)
 - ✅ Docker Hub URL generation
 - ✅ Image pulling functionality
+- ✅ Mount validation and configuration parsing
 
 ### Test Structure
 
@@ -396,10 +471,18 @@ tests/
 # Set Python as default for data work
 ./container-here --config set default_image python:3.11-slim
 
+# Set up persistent mounts for data and notebooks
+./container-here --config set custom_mounts '[
+  {"host":"/home/user/datasets","container":"/data","mode":"ro"},
+  {"host":"/home/user/notebooks","container":"/notebooks","mode":"rw"}
+]'
+
 # Create containers for different analyses
-./container-here data-analysis      # Uses python:3.11-slim
-./container-here ml-experiments     # Uses python:3.11-slim
-./container-here --image jupyter/scipy-notebook research  # Jupyter for notebooks
+./container-here data-analysis      # Uses python:3.11-slim with data mounts
+./container-here ml-experiments     # Uses python:3.11-slim with data mounts
+
+# Override with specific mounts for special projects
+./container-here --mount /home/user/large-dataset:/data:ro --image jupyter/scipy-notebook research
 ```
 
 #### DevOps and System Administration
@@ -408,10 +491,14 @@ tests/
 # Set Ubuntu as default for system work
 ./container-here --config set default_image ubuntu:22.04
 
-# Create containers for different tasks
-./container-here server-config      # Uses ubuntu:22.04
-./container-here network-tools      # Uses ubuntu:22.04
-./container-here --image alpine:latest minimal-debug  # Lightweight debugging
+# Mount common configuration directories
+./container-here --mount-ro /etc/ssl:/etc/ssl --mount /var/log:/logs server-config
+
+# Quick debugging with minimal tools
+./container-here --image alpine:latest --mount-ro /etc/hosts:/etc/hosts minimal-debug
+
+# Container with access to Docker socket (for Docker-in-Docker workflows)
+./container-here --mount /var/run/docker.sock:/var/run/docker.sock:rw docker-tools
 ```
 
 ### Multi-Language Development
@@ -488,6 +575,66 @@ tests/
 ./container-here --image redis:alpine cache-testing
 ./container-here --image mongo:6 document-db
 ./container-here --image nginx:alpine web-server
+```
+
+## Custom Mount Path Examples
+
+### Development Environment Setup
+
+```bash
+# Mount source code, build artifacts, and configuration
+./container-here \
+  --mount /home/user/projects:/workspace:rw \
+  --mount-ro /home/user/.gitconfig:/root/.gitconfig \
+  --mount /home/user/.ssh:/root/.ssh:ro \
+  --image ubuntu:22.04 dev-env
+```
+
+### Database Container with Persistent Data
+
+```bash
+# Mount database data directory and config files
+./container-here \
+  --mount /var/lib/mysql:/var/lib/mysql:rw \
+  --mount-ro /etc/mysql/my.cnf:/etc/mysql/my.cnf \
+  --image mysql:8.0 database
+```
+
+### Web Server with Content and Logs
+
+```bash
+# Mount web content as read-only, logs as read-write
+./container-here \
+  --mount-ro /home/user/website:/var/www/html \
+  --mount /var/log/nginx:/var/log/nginx:rw \
+  --image nginx:alpine web-server
+```
+
+### Data Processing Pipeline
+
+```bash
+# Mount input data as read-only, output directory as read-write
+./container-here \
+  --mount-ro /data/input:/app/input \
+  --mount /data/output:/app/output:rw \
+  --mount-ro /config/pipeline.yaml:/app/config.yaml \
+  --image python:3.11 data-processor
+```
+
+### Configuration-Based Persistent Setup
+
+```bash
+# Set up a development environment with persistent mounts
+./container-here --config set custom_mounts '[
+  {"host":"/home/user/projects","container":"/workspace","mode":"rw"},
+  {"host":"/home/user/.gitconfig","container":"/root/.gitconfig","mode":"ro"},
+  {"host":"/home/user/.ssh","container":"/root/.ssh","mode":"ro"},
+  {"host":"/home/user/bin","container":"/usr/local/bin","mode":"ro"}
+]'
+
+# Now all containers automatically get these mounts
+./container-here my-project      # Automatically includes all configured mounts
+./container-here another-project # Same persistent mounts applied
 ```
 
 ## Error Handling
