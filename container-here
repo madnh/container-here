@@ -78,7 +78,9 @@ show_usage() {
   echo "  --list            List all container-here containers and their status"
   echo "  --attach NAME     Attach to existing container by name"
   echo "  --config          Show configuration management options"
-  echo "  view-scripts      View content of the scripts volume using temporary Alpine container"
+  echo "  view-scripts [OPTIONS]  View content of the scripts volume using temporary container"
+  echo "    --alpine        Force use of Alpine image for viewing scripts"
+  echo "    --image IMAGE   Use specific image for viewing scripts"
   echo "  -h, --help        Show this help message"
   echo ""
   echo "Examples:"
@@ -87,7 +89,9 @@ show_usage() {
   echo "  $script_name --image ubuntu my-app    # Use ubuntu image with 'my-app' as name"
   echo "  $script_name --list                   # List all container-here containers"
   echo "  $script_name --attach my-app          # Attach to existing 'my-app' container"
-  echo "  $script_name view-scripts             # View content of scripts volume in temporary container"
+  echo "  $script_name view-scripts             # View content of scripts volume (uses config default or alpine)"
+  echo "  $script_name view-scripts --alpine   # View scripts using Alpine image"
+  echo "  $script_name view-scripts --image ubuntu:22.04  # View scripts using Ubuntu image"
 }
 
 # Function to show config management help
@@ -181,6 +185,45 @@ handle_config_command() {
   esac
 }
 
+# Function to parse view-scripts specific arguments
+parse_view_scripts_arguments() {
+  local view_image=""
+  local force_alpine=false
+  
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+    --alpine)
+      force_alpine=true
+      shift
+      ;;
+    --image)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --image requires a value"
+        echo "Usage: view-scripts --image <image>"
+        exit 1
+      fi
+      view_image="$2"
+      shift 2
+      ;;
+    *)
+      echo "Error: Unknown option for view-scripts: $1"
+      echo "Usage: view-scripts [--alpine] [--image <image>]"
+      exit 1
+      ;;
+    esac
+  done
+  
+  # Determine which image to use
+  if [[ "$force_alpine" == true ]]; then
+    view_image="alpine"
+  elif [[ -z "$view_image" ]]; then
+    # Use default behavior: config default or alpine
+    view_image=$(get_config_value "default_image" "alpine")
+  fi
+  
+  view_scripts_volume "$view_image"
+}
+
 # Function to parse command line arguments
 parse_arguments() {
   # Get defaults from config
@@ -204,7 +247,8 @@ parse_arguments() {
       exit 0
       ;;
     view-scripts | --view-scripts)
-      view_scripts_volume
+      shift
+      parse_view_scripts_arguments "$@"
       exit 0
       ;;
     --list)
@@ -430,6 +474,8 @@ attach_to_container() {
 
 # Function to view scripts volume content
 view_scripts_volume() {
+  local view_image="$1"
+  
   echo "Viewing scripts volume content..."
 
   # Check if container-here-user-scripts exists
@@ -439,9 +485,38 @@ view_scripts_volume() {
     exit 1
   fi
 
-  # Get default image from config, fallback to alpine
-  local view_image
-  view_image=$(get_config_value "default_image" "alpine")
+  # Validate the image
+  echo "Checking Docker image: $view_image"
+  if ! check_image_exists_locally "$view_image"; then
+    echo "Image '$view_image' not found locally, checking Docker Hub..."
+    if check_image_on_dockerhub "$view_image"; then
+      echo "✓ Image '$view_image' found on Docker Hub"
+      local docker_hub_url
+      docker_hub_url=$(get_dockerhub_url "$view_image")
+      echo "Docker Hub URL: $docker_hub_url"
+      echo ""
+      
+      read -p "Do you want to pull this image? (y/N): " -r
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Pulling image '$view_image'..."
+        if docker pull "$view_image"; then
+          echo "✓ Image '$view_image' pulled successfully"
+        else
+          echo "✗ Failed to pull image '$view_image'"
+          exit 1
+        fi
+      else
+        echo "Image pull cancelled. Cannot proceed without the image."
+        exit 1
+      fi
+    else
+      echo "✗ Image '$view_image' not found on Docker Hub"
+      echo "Please check the image name and try again."
+      exit 1
+    fi
+  else
+    echo "✓ Image '$view_image' found locally"
+  fi
 
   # Create unique temporary container name
   local temp_container="container-here-view-$(date +%s)"
