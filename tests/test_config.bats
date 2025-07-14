@@ -118,14 +118,14 @@ teardown() {
     [ "$output" = "local ($TEST_PROJECT/.container-here.conf)" ]
 }
 
-@test "get_config_source identifies user config source" {
+@test "get_config_source identifies global config source" {
     source "$BATS_TEST_DIRNAME/../container-here"
     
-    echo "default_image=user-image" > "$CONFIG_FILE"
+    echo "default_image=global-image" > "$CONFIG_FILE"
     
     run get_config_source "default_image"
     [ "$status" -eq 0 ]
-    [ "$output" = "user ($CONFIG_FILE)" ]
+    [ "$output" = "global ($CONFIG_FILE)" ]
 }
 
 @test "get_config_source returns default when no config exists" {
@@ -136,44 +136,44 @@ teardown() {
 }
 
 # Test setting configuration values
-@test "set_config_value sets user config by default" {
+@test "set_config_value sets local config by default" {
     source "$BATS_TEST_DIRNAME/../container-here"
     
     run set_config_value "default_image" "test-image"
     [ "$status" -eq 0 ]
     
-    # Check file was created and contains the value
-    [ -f "$CONFIG_FILE" ]
-    grep -q "^default_image=test-image$" "$CONFIG_FILE"
-}
-
-@test "set_config_value sets local config when specified" {
-    source "$BATS_TEST_DIRNAME/../container-here"
-    
-    run set_config_value "default_image" "local-test-image" "local"
-    [ "$status" -eq 0 ]
-    
     # Check local file was created and contains the value
     [ -f "$TEST_PROJECT/.container-here.conf" ]
-    grep -q "^default_image=local-test-image$" "$TEST_PROJECT/.container-here.conf"
+    grep -q "^default_image=test-image$" "$TEST_PROJECT/.container-here.conf"
 }
 
-@test "set_config_value overwrites existing values" {
+@test "set_config_value sets global config when specified" {
     source "$BATS_TEST_DIRNAME/../container-here"
     
-    # Set initial value
-    echo "default_image=old-image" > "$CONFIG_FILE"
-    echo "other_key=value" >> "$CONFIG_FILE"
+    run set_config_value "default_image" "global-test-image" "global"
+    [ "$status" -eq 0 ]
     
-    # Update the value
+    # Check global file was created and contains the value
+    [ -f "$CONFIG_FILE" ]
+    grep -q "^default_image=global-test-image$" "$CONFIG_FILE"
+}
+
+@test "set_config_value overwrites existing values in local config" {
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    # Set initial value in local config
+    echo "default_image=old-image" > "$TEST_PROJECT/.container-here.conf"
+    echo "other_key=value" >> "$TEST_PROJECT/.container-here.conf"
+    
+    # Update the value (default is local)
     run set_config_value "default_image" "new-image"
     [ "$status" -eq 0 ]
     
     # Check old value is gone and new value exists
-    ! grep -q "^default_image=old-image$" "$CONFIG_FILE"
-    grep -q "^default_image=new-image$" "$CONFIG_FILE"
+    ! grep -q "^default_image=old-image$" "$TEST_PROJECT/.container-here.conf"
+    grep -q "^default_image=new-image$" "$TEST_PROJECT/.container-here.conf"
     # Other keys should remain
-    grep -q "^other_key=value$" "$CONFIG_FILE"
+    grep -q "^other_key=value$" "$TEST_PROJECT/.container-here.conf"
 }
 
 # Test list_config_sources function
@@ -186,7 +186,7 @@ teardown() {
     [[ "$output" == *"1. Command-line arguments"* ]]
     [[ "$output" == *"2. Environment variables"* ]]
     [[ "$output" == *"3. Local project config"* ]]
-    [[ "$output" == *"4. User config"* ]]
+    [[ "$output" == *"4. Global/User config"* ]]
     [[ "$output" == *"5. Built-in defaults"* ]]
 }
 
@@ -220,4 +220,29 @@ teardown() {
     run set_config_value "default_image" "test-image" "invalid"
     [ "$status" -eq 1 ]
     [[ "$output" == *"Invalid config target"* ]]
+}
+
+# Test new command-line interface
+@test "handle_config_command sets local by default" {
+    source "$BATS_TEST_DIRNAME/../container-here"
+    export BATS_TEST_MODE=1
+    
+    # Simulate: container-here --config set default_image test-image
+    handle_config_command "set" "default_image" "test-image" > /tmp/test_output 2>&1
+    
+    # Check local file was created
+    [ -f "$TEST_PROJECT/.container-here.conf" ]
+    grep -q "^default_image=test-image$" "$TEST_PROJECT/.container-here.conf"
+}
+
+@test "handle_config_command supports --global flag" {
+    source "$BATS_TEST_DIRNAME/../container-here"
+    export BATS_TEST_MODE=1
+    
+    # Simulate: container-here --config set --global default_image global-image
+    handle_config_command "set" "--global" "default_image" "global-image" > /tmp/test_output 2>&1
+    
+    # Check global file was created
+    [ -f "$CONFIG_FILE" ]
+    grep -q "^default_image=global-image$" "$CONFIG_FILE"
 }

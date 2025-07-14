@@ -35,23 +35,23 @@ set_config_value_in_file() {
   echo "$key=$value" >>"$config_file"
 }
 
-# Function to set config value (default to user config)
+# Function to set config value (default to local config like git)
 set_config_value() {
   local key="$1"
   local value="$2"
-  local target="${3:-user}"  # Default to user config
+  local target="${3:-local}"  # Default to local config (git-like behavior)
   
   case "$target" in
     "local")
       local local_config="$PWD/$LOCAL_CONFIG_FILE"
       set_config_value_in_file "$local_config" "$key" "$value"
       ;;
-    "user")
+    "global")
       ensure_config_dir
       set_config_value_in_file "$CONFIG_FILE" "$key" "$value"
       ;;
     *)
-      echo "Error: Invalid config target. Use 'local' or 'user'" >&2
+      echo "Error: Invalid config target. Use 'local' or 'global'" >&2
       return 1
       ;;
   esac
@@ -155,9 +155,9 @@ get_config_source() {
     fi
   fi
   
-  # Check user config
+  # Check global/user config
   if get_config_value_from_file "$CONFIG_FILE" "$key" >/dev/null 2>&1; then
-    echo "user ($CONFIG_FILE)"
+    echo "global ($CONFIG_FILE)"
     return 0
   fi
   
@@ -178,7 +178,7 @@ list_config_sources() {
     echo "3. Local project config: not found (./$LOCAL_CONFIG_FILE)"
   fi
   
-  echo "4. User config: $CONFIG_FILE"
+  echo "4. Global/User config: $CONFIG_FILE"
   echo "5. Built-in defaults"
 }
 
@@ -295,11 +295,11 @@ list_config() {
     echo "  Local config: ./$LOCAL_CONFIG_FILE (not found)"
   fi
   
-  # Check user config
+  # Check global/user config
   if [[ -f "$CONFIG_FILE" ]]; then
-    echo "  User config: $CONFIG_FILE (exists)"
+    echo "  Global/User config: $CONFIG_FILE (exists)"
   else
-    echo "  User config: $CONFIG_FILE (not found)"
+    echo "  Global/User config: $CONFIG_FILE (not found)"
   fi
 }
 
@@ -326,7 +326,7 @@ show_usage() {
   echo "  --list            List all container-here containers and their status"
   echo "  --attach NAME     Attach to existing container by name"
   echo "  --debug           Print the docker command instead of executing it"
-  echo "  --config          Manage configuration (set, get, list, which, sources)"
+  echo "  --config          Manage configuration (defaults to local, use --global for user-wide)"
   echo "  view-scripts [OPTIONS]  View content of the scripts volume using temporary container"
   echo "    --alpine        Force use of Alpine image for viewing scripts"
   echo "    --image IMAGE   Use specific image for viewing scripts"
@@ -356,7 +356,7 @@ show_config_help() {
   echo "Configuration Management:"
   echo ""
   echo "Commands:"
-  echo "  $script_name --config set [local|user] <key> <value>  Set a configuration value"
+  echo "  $script_name --config set [--global] <key> <value>    Set a configuration value"
   echo "  $script_name --config get <key>                       Get a configuration value"
   echo "  $script_name --config list                            List all configuration values"
   echo "  $script_name --config which <key>                     Show which config source provides a value"
@@ -371,15 +371,15 @@ show_config_help() {
   echo "  1. Command-line arguments (--image, --mount)"
   echo "  2. Environment variables (CONTAINER_HERE_DEFAULT_IMAGE, CONTAINER_HERE_CUSTOM_MOUNTS)"
   echo "  3. Local project config (.container-here.conf in current directory)"
-  echo "  4. User config (~/.config/container-here/config)"
+  echo "  4. Global/User config (~/.config/container-here/config)"
   echo "  5. Built-in defaults"
   echo ""
   echo "Examples:"
-  echo "  # Set user config (default)"
-  echo "  $script_name --config set default_image ubuntu:22.04"
+  echo "  # Set local project config (default)"
+  echo "  $script_name --config set default_image node:18"
   echo "  "
-  echo "  # Set local project config"
-  echo "  $script_name --config set local default_image node:18"
+  echo "  # Set global/user config"
+  echo "  $script_name --config set --global default_image ubuntu:22.04"
   echo "  "
   echo "  # Check which config provides a value"
   echo "  $script_name --config which default_image"
@@ -387,8 +387,8 @@ show_config_help() {
   echo "  # Override with environment variable"
   echo "  CONTAINER_HERE_DEFAULT_IMAGE=python:3.11 $script_name"
   echo "  "
-  echo "  # Set custom mounts in local config"
-  echo "  $script_name --config set local custom_mounts '[{\"host\":\"/data\",\"container\":\"/app/data\",\"mode\":\"rw\"}]'"
+  echo "  # Set custom mounts in local config (default)"
+  echo "  $script_name --config set custom_mounts '[{\"host\":\"/data\",\"container\":\"/app/data\",\"mode\":\"rw\"}]'"
 }
 
 # Function to handle config commands
@@ -398,25 +398,25 @@ handle_config_command() {
 
   case "$action" in
   set)
+    local target="local"  # default target (git-like behavior)
+    local key=""
+    local value=""
+    
+    # Check for --global flag
+    if [[ "$1" == "--global" ]]; then
+      target="global"
+      shift
+    fi
+    
+    # Now check for key and value
     if [[ $# -lt 2 ]]; then
       echo "Error: config set requires key and value"
-      echo "Usage: --config set <key> <value>"
+      echo "Usage: --config set [--global] <key> <value>"
       exit 1
     fi
-    local key="$1"
-    local target="user"  # default target
     
-    # Check for target specifier
-    if [[ "$key" == "local" || "$key" == "user" ]]; then
-      target="$key"
-      shift
-      key="$1"
-      if [[ -z "$key" ]]; then
-        echo "Error: config set requires a key after target"
-        echo "Usage: --config set [local|user] <key> <value>"
-        exit 1
-      fi
-    fi
+    key="$1"
+    value="$2"
 
     case "$key" in
     default_image)
@@ -427,7 +427,11 @@ handle_config_command() {
       fi
       local value="$2"
       set_config_value "$key" "$value" "$target"
-      echo "Set $key = $value in $target config"
+      if [[ "$target" == "global" ]]; then
+        echo "Set $key = $value (global)"
+      else
+        echo "Set $key = $value (local)"
+      fi
       ;;
 
     custom_mounts)
@@ -438,8 +442,12 @@ handle_config_command() {
       fi
       local value="$2"
       if validate_custom_mounts "$value"; then
-        set_config_value "$key" "$value"
-        echo "Set $key = $value"
+        set_config_value "$key" "$value" "$target"
+        if [[ "$target" == "global" ]]; then
+          echo "Set $key = $value (global)"
+        else
+          echo "Set $key = $value (local)"
+        fi
       else
         echo "Error: Invalid custom_mounts configuration"
         exit 1

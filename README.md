@@ -201,9 +201,11 @@ Examples:
 
 ### Configuration Commands
 
-- `--config set <key> <value>`: Set a configuration value
+- `--config set [--global] <key> <value>`: Set a configuration value (local by default)
 - `--config get <key>`: Get a configuration value
 - `--config list`: List all configuration values
+- `--config which <key>`: Show which config source provides a value
+- `--config sources`: List all config sources in precedence order
 - `--config`: Show configuration help
 ## Image Validation Process
 
@@ -286,7 +288,7 @@ Container Here supports multi-level configuration with clear precedence rules, a
 1. **Command-line arguments** - Override all configurations
 2. **Environment variables** - Runtime overrides (e.g., `CONTAINER_HERE_DEFAULT_IMAGE`)
 3. **Local project config** - `.container-here.conf` in current directory
-4. **User config** - `~/.config/container-here/config`
+4. **Global/User config** - `~/.config/container-here/config`
 5. **Built-in defaults** - Hardcoded fallback values
 
 ### Configuration Management
@@ -300,7 +302,7 @@ Container Here supports multi-level configuration with clear precedence rules, a
 Configuration Management:
 
 Commands:
-  container-here --config set [local|user] <key> <value>  Set a configuration value
+  container-here --config set [--global] <key> <value>    Set a configuration value
   container-here --config get <key>                       Get a configuration value
   container-here --config list                            List all configuration values
   container-here --config which <key>                     Show which config source provides a value
@@ -312,11 +314,11 @@ Configuration keys:
                             Format: [{"host":"/path","container":"/path","mode":"rw|ro"}]
 
 Examples:
-  # Set user config (default)
-  container-here --config set default_image ubuntu:22.04
+  # Set local project config (default)
+  container-here --config set default_image node:18
   
-  # Set local project config
-  container-here --config set local default_image node:18
+  # Set global/user config
+  container-here --config set --global default_image ubuntu:22.04
   
   # Check which config provides a value
   container-here --config which default_image
@@ -328,11 +330,11 @@ Examples:
 #### Configuration Commands
 
 ```bash
-# Set user config (default)
-./container-here --config set default_image ubuntu:22.04
+# Set local project config (default behavior like git)
+./container-here --config set default_image node:18
 
-# Set local project config
-./container-here --config set local default_image node:18
+# Set global/user config (requires --global flag)
+./container-here --config set --global default_image ubuntu:22.04
 
 # Get current value (from any source)
 ./container-here --config get default_image
@@ -404,14 +406,14 @@ custom_mounts=[{"host":"/home/user/data","container":"/app/data","mode":"rw"},{"
 #### Multi-Level Configuration Example
 
 ```bash
-# 1. Set user-wide defaults
-./container-here --config set default_image ubuntu:22.04
-./container-here --config set custom_mounts '[{"host":"/home/user/data","container":"/data","mode":"rw"}]'
+# 1. Set global/user-wide defaults
+./container-here --config set --global default_image ubuntu:22.04
+./container-here --config set --global custom_mounts '[{"host":"/home/user/data","container":"/data","mode":"rw"}]'
 
-# 2. Set project-specific overrides
+# 2. Set project-specific overrides (default behavior)
 cd /path/to/nodejs-project
-./container-here --config set local default_image node:18-alpine
-./container-here --config set local custom_mounts '[{"host":"./src","container":"/app/src","mode":"rw"}]'
+./container-here --config set default_image node:18-alpine
+./container-here --config set custom_mounts '[{"host":"./src","container":"/app/src","mode":"rw"}]'
 
 # 3. Check which configuration is active
 ./container-here --config which default_image
@@ -420,7 +422,7 @@ cd /path/to/nodejs-project
 
 # 4. List all configurations with sources
 ./container-here --config list
-# Output shows both local and user configs with source indicators
+# Output shows both local and global configs with source indicators
 
 # 5. Override with environment variable for one-off use
 CONTAINER_HERE_DEFAULT_IMAGE=python:3.11 ./container-here test-python
