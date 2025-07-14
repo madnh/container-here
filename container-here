@@ -288,6 +288,140 @@ validate_memory_limit() {
   return 0
 }
 
+# Function to validate port format (host:container[:protocol])
+validate_port_format() {
+  local port_mapping="$1"
+  
+  # Split the mapping into components
+  IFS=':' read -r host_port container_port protocol <<< "$port_mapping"
+  
+  # Check if we have at least host and container ports
+  if [[ -z "$host_port" || -z "$container_port" ]]; then
+    echo "Error: Port mapping must have format host_port:container_port[:protocol]"
+    return 1
+  fi
+  
+  # Validate host port (1-65535)
+  if [[ ! "$host_port" =~ ^[0-9]+$ ]] || [[ "$host_port" -lt 1 || "$host_port" -gt 65535 ]]; then
+    echo "Error: Host port must be a number between 1 and 65535: $host_port"
+    return 1
+  fi
+  
+  # Validate container port (1-65535)
+  if [[ ! "$container_port" =~ ^[0-9]+$ ]] || [[ "$container_port" -lt 1 || "$container_port" -gt 65535 ]]; then
+    echo "Error: Container port must be a number between 1 and 65535: $container_port"
+    return 1
+  fi
+  
+  # Validate protocol if specified (default to tcp)
+  if [[ -n "$protocol" ]]; then
+    if [[ "$protocol" != "tcp" && "$protocol" != "udp" && "$protocol" != "sctp" ]]; then
+      echo "Error: Protocol must be tcp, udp, or sctp: $protocol"
+      return 1
+    fi
+  fi
+  
+  return 0
+}
+
+# Function to parse port mappings from JSON or simple format
+parse_port_mappings() {
+  local port_mappings_config="$1"
+  
+  # Check if it's JSON format (starts with [)
+  if [[ "$port_mappings_config" =~ ^\[.*\]$ ]]; then
+    # JSON format: [{"host":"8080","container":"80","protocol":"tcp"}]
+    local entries=$(echo "$port_mappings_config" | sed 's/^\[//; s/\]$//' | sed 's/},{/}|{/g')
+    
+    # Process each entry
+    IFS='|' read -ra port_entries <<< "$entries"
+    for entry in "${port_entries[@]}"; do
+      # Extract host, container, and protocol using sed
+      local host=$(echo "$entry" | sed -n 's/.*"host"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+      local container=$(echo "$entry" | sed -n 's/.*"container"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+      local protocol=$(echo "$entry" | sed -n 's/.*"protocol"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+      
+      # Default protocol to tcp if not specified
+      if [[ -z "$protocol" ]]; then
+        protocol="tcp"
+      fi
+      
+      # Validate the port mapping
+      if ! validate_port_format "$host:$container:$protocol"; then
+        continue
+      fi
+      
+      # Output in standardized format
+      echo "$host:$container:$protocol"
+    done
+  else
+    # Simple format: "8080:80 9090:90:udp"
+    read -ra port_entries <<< "$port_mappings_config"
+    for entry in "${port_entries[@]}"; do
+      # Skip empty entries
+      if [[ -z "$entry" ]]; then
+        continue
+      fi
+      
+      # Parse host:container[:protocol]
+      IFS=':' read -r host container protocol <<< "$entry"
+      
+      # Default protocol to tcp if not specified
+      if [[ -z "$protocol" ]]; then
+        protocol="tcp"
+      fi
+      
+      # Validate the port mapping
+      if ! validate_port_format "$host:$container:$protocol"; then
+        continue
+      fi
+      
+      # Output in standardized format
+      echo "$host:$container:$protocol"
+    done
+  fi
+}
+
+# Function to validate port mappings configuration
+validate_port_mappings() {
+  local port_mappings_config="$1"
+  
+  # Check if it's empty or just empty array
+  if [[ -z "$port_mappings_config" || "$port_mappings_config" == "[]" ]]; then
+    return 0
+  fi
+  
+  # Accept both JSON format [{"host":"8080","container":"80","protocol":"tcp"}] 
+  # and simple format "8080:80 9090:90:udp"
+  if [[ ! "$port_mappings_config" =~ ^\[.*\]$ ]] && [[ ! "$port_mappings_config" =~ ^[0-9:[:space:]tcpudsctp]+$ ]]; then
+    echo "Error: port_mappings must be in format: '8080:80 9090:90:udp' or '[{\"host\":\"8080\",\"container\":\"80\",\"protocol\":\"tcp\"}]'"
+    return 1
+  fi
+  
+  # Parse and validate each port mapping
+  local temp_file=$(mktemp)
+  parse_port_mappings "$port_mappings_config" > "$temp_file" 2>&1
+  
+  if grep -q "Error:" "$temp_file"; then
+    cat "$temp_file" >&2
+    rm "$temp_file"
+    return 1
+  fi
+  
+  # Check for port conflicts (same host port used multiple times)
+  local host_ports=$(awk -F':' '{print $1}' "$temp_file" | sort)
+  local duplicate_ports=$(echo "$host_ports" | uniq -d)
+  
+  if [[ -n "$duplicate_ports" ]]; then
+    echo "Error: Duplicate host ports found: $duplicate_ports" >&2
+    rm "$temp_file"
+    return 1
+  fi
+  
+  rm "$temp_file"
+  return 0
+}
+
 # Function to list all config values
 list_config() {
   echo "Current configuration (with sources):"
@@ -335,6 +469,21 @@ list_config() {
   fi
   
   echo ""
+  echo "Port settings:"
+  # Port mappings
+  local port_mappings=$(get_config_value "port_mappings" "")
+  local port_mappings_source=$(get_config_source "port_mappings")
+  
+  if [[ -n "$port_mappings" && "$port_mappings" != "[]" ]]; then
+    echo "  port_mappings:  [$port_mappings_source]"
+    parse_port_mappings "$port_mappings" | while IFS=':' read -r host container protocol; do
+      echo "    $host -> $container ($protocol)"
+    done
+  else
+    echo "  port_mappings=[]  [$port_mappings_source]"
+  fi
+  
+  echo ""
   echo "Configuration files:"
   
   # Check local config
@@ -373,6 +522,9 @@ show_usage() {
   echo "  --mount-ro PATH   Mount host path as read-only: /host/path:/container/path"
   echo "                    Shorthand for --mount /host/path:/container/path:ro"
   echo "  --network NAME    Connect container to Docker network (can be used multiple times)"
+  echo "  --port MAPPING    Map host port to container port: host_port:container_port[:protocol]"
+  echo "                    Protocol can be 'tcp' (default), 'udp', or 'sctp'"
+  echo "                    Can be used multiple times for multiple ports"
   echo "  --cpu NUMBER      Limit CPU usage (e.g., 1, 1.5, 2.0)"
   echo "  --memory SIZE     Limit memory usage (e.g., 512m, 1g, 2G)"
   echo "  --list            List all container-here containers and their status"
@@ -393,6 +545,8 @@ show_usage() {
   echo "  $script_name --mount /data:/data:ro --mount /logs:/logs:rw my-app # Multiple mounts"
   echo "  $script_name --network my-network my-app     # Connect to Docker network"
   echo "  $script_name --network net1 --network net2 my-app # Connect to multiple networks"
+  echo "  $script_name --port 8080:80 my-app           # Map host port 8080 to container port 80"
+  echo "  $script_name --port 8080:80:tcp --port 9090:9090:udp my-app # Multiple port mappings"
   echo "  $script_name --cpu 2 --memory 1g my-app      # Limit to 2 CPUs and 1GB memory"
   echo "  $script_name --cpu 1.5 my-app                # Limit to 1.5 CPUs"
   echo "  $script_name --memory 512m my-app            # Limit to 512MB memory"
@@ -421,12 +575,15 @@ show_config_help() {
   echo "  default_image              Default Docker image to use (default: alpine)"
   echo "  custom_mounts              Custom mount definitions in JSON format"
   echo "                            Format: [{\"host\":\"/path\",\"container\":\"/path\",\"mode\":\"rw|ro\"}]"
+  echo "  port_mappings              Port mapping definitions (simple or JSON format)"
+  echo "                            Simple: '8080:80 9090:90:udp'"
+  echo "                            JSON: '[{\"host\":\"8080\",\"container\":\"80\",\"protocol\":\"tcp\"}]'"
   echo "  cpu_limit                  Default CPU limit (e.g., 1, 1.5, 2.0)"
   echo "  memory_limit               Default memory limit (e.g., 512m, 1g, 2G)"
   echo ""
   echo "Configuration sources (highest to lowest priority):"
-  echo "  1. Command-line arguments (--image, --mount, --cpu, --memory)"
-  echo "  2. Environment variables (CONTAINER_HERE_DEFAULT_IMAGE, CONTAINER_HERE_CUSTOM_MOUNTS, CONTAINER_HERE_CPU_LIMIT, CONTAINER_HERE_MEMORY_LIMIT)"
+  echo "  1. Command-line arguments (--image, --mount, --port, --cpu, --memory)"
+  echo "  2. Environment variables (CONTAINER_HERE_DEFAULT_IMAGE, CONTAINER_HERE_CUSTOM_MOUNTS, CONTAINER_HERE_PORT_MAPPINGS, CONTAINER_HERE_CPU_LIMIT, CONTAINER_HERE_MEMORY_LIMIT)"
   echo "  3. Local project config (.container-here.conf in current directory)"
   echo "  4. Global/User config (~/.config/container-here/config)"
   echo "  5. Built-in defaults"
@@ -446,6 +603,9 @@ show_config_help() {
   echo "  "
   echo "  # Set custom mounts in local config (default)"
   echo "  $script_name --config set custom_mounts '[{\"host\":\"/data\",\"container\":\"/app/data\",\"mode\":\"rw\"}]'"
+  echo "  "
+  echo "  # Set port mappings in local config (simple format)"
+  echo "  $script_name --config set port_mappings '8080:80 9090:90:udp'"
   echo "  "
   echo "  # Set resource limits"
   echo "  $script_name --config set cpu_limit 2.0"
@@ -516,6 +676,27 @@ handle_config_command() {
       fi
       ;;
 
+    port_mappings)
+      if [[ $# -ne 2 ]]; then
+        echo "Error: port_mappings requires exactly one value"
+        echo "Usage: --config set port_mappings '8080:80 9090:90:udp'"
+        echo "   or: --config set port_mappings '[{\"host\":\"8080\",\"container\":\"80\",\"protocol\":\"tcp\"}]'"
+        exit 1
+      fi
+      local value="$2"
+      if validate_port_mappings "$value"; then
+        set_config_value "$key" "$value" "$target"
+        if [[ "$target" == "global" ]]; then
+          echo "Set $key = $value (global)"
+        else
+          echo "Set $key = $value (local)"
+        fi
+      else
+        echo "Error: Invalid port_mappings configuration"
+        exit 1
+      fi
+      ;;
+
     cpu_limit)
       if [[ $# -ne 2 ]]; then
         echo "Error: cpu_limit requires exactly one value"
@@ -558,7 +739,7 @@ handle_config_command() {
 
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image, custom_mounts, cpu_limit, memory_limit"
+      echo "Available keys: default_image, custom_mounts, port_mappings, cpu_limit, memory_limit"
       exit 1
       ;;
     esac
@@ -615,7 +796,7 @@ handle_config_command() {
 
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image, custom_mounts, cpu_limit, memory_limit"
+      echo "Available keys: default_image, custom_mounts, port_mappings, cpu_limit, memory_limit"
       exit 1
       ;;
     esac
@@ -639,7 +820,7 @@ handle_config_command() {
       ;;
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image, custom_mounts, cpu_limit, memory_limit"
+      echo "Available keys: default_image, custom_mounts, port_mappings, cpu_limit, memory_limit"
       exit 1
       ;;
     esac
@@ -704,6 +885,8 @@ parse_arguments() {
   CLI_CUSTOM_MOUNTS=()
   # Array to store networks from CLI
   CLI_NETWORKS=()
+  # Array to store port mappings from CLI
+  CLI_PORT_MAPPINGS=()
   # Resource limits from CLI
   CLI_CPU_LIMIT=""
   CLI_MEMORY_LIMIT=""
@@ -744,6 +927,16 @@ parse_arguments() {
         exit 1
       fi
       CLI_NETWORKS+=("$2")
+      shift 2
+      ;;
+
+    --port)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --port requires a value"
+        echo "Usage: --port <host_port>:<container_port>[:<protocol>]"
+        exit 1
+      fi
+      CLI_PORT_MAPPINGS+=("$2")
       shift 2
       ;;
 
@@ -1164,6 +1357,51 @@ build_resource_args() {
   printf '%s\n' "${resource_args[@]}"
 }
 
+# Function to build port arguments for docker run
+build_port_args() {
+  local -a port_args=()
+  
+  # Add port mappings from config
+  local port_mappings=$(get_config_value "port_mappings" "[]")
+  if [[ "$port_mappings" != "[]" ]]; then
+    local temp_file=$(mktemp)
+    parse_port_mappings "$port_mappings" > "$temp_file"
+    
+    while IFS=':' read -r host container protocol; do
+      if [[ -n "$host" && -n "$container" ]]; then
+        port_args+=("-p" "$host:$container/$protocol")
+      fi
+    done < "$temp_file"
+    
+    rm "$temp_file"
+  fi
+  
+  # Add CLI port mappings (override config)
+  if [[ ${#CLI_PORT_MAPPINGS[@]} -gt 0 ]]; then
+    for port_spec in "${CLI_PORT_MAPPINGS[@]}"; do
+      if validate_port_format "$port_spec"; then
+        # Parse port spec
+        local host_port=$(echo "$port_spec" | cut -d':' -f1)
+        local container_port=$(echo "$port_spec" | cut -d':' -f2)
+        local protocol=$(echo "$port_spec" | cut -d':' -f3)
+        
+        # Default protocol if not specified
+        if [[ -z "$protocol" ]]; then
+          protocol="tcp"
+        fi
+        
+        port_args+=("-p" "$host_port:$container_port/$protocol")
+      else
+        echo "Exiting due to invalid port specification."
+        exit 1
+      fi
+    done
+  fi
+  
+  # Output port arguments
+  printf '%s\n' "${port_args[@]}"
+}
+
 # Function to build hostname arguments for docker run
 build_hostname_args() {
   local -a hostname_args=()
@@ -1354,6 +1592,14 @@ while IFS= read -r line; do
   fi
 done < <(build_hostname_args)
 
+# Build port arguments
+PORT_ARGS=()
+while IFS= read -r line; do
+  if [[ -n "$line" ]]; then
+    PORT_ARGS+=("$line")
+  fi
+done < <(build_port_args)
+
 # Display mount information
 echo "Mount configuration:"
 echo "  $(pwd) -> /app (rw)"
@@ -1392,6 +1638,18 @@ if [[ ${#CLI_NETWORKS[@]} -gt 0 ]]; then
   done
 fi
 
+# Show port mappings
+if [[ ${#PORT_ARGS[@]} -gt 0 ]]; then
+  echo "Port mappings:"
+  i=0
+  while [[ $i -lt ${#PORT_ARGS[@]} ]]; do
+    if [[ "${PORT_ARGS[$i]}" == "-p" ]]; then
+      echo "  ${PORT_ARGS[$((i+1))]}"
+    fi
+    ((i+=2))
+  done
+fi
+
 # Show resource limits
 if [[ ${#RESOURCE_ARGS[@]} -gt 0 ]]; then
   echo "Resource limits:"
@@ -1420,6 +1678,9 @@ if [[ "$DEBUG_MODE" == "true" ]]; then
   for arg in "${NETWORK_ARGS[@]}"; do
     echo "  \"$arg\" \\"
   done
+  for arg in "${PORT_ARGS[@]}"; do
+    echo "  \"$arg\" \\"
+  done
   for arg in "${RESOURCE_ARGS[@]}"; do
     echo "  \"$arg\" \\"
   done
@@ -1430,6 +1691,7 @@ else
     "${HOSTNAME_ARGS[@]}" \
     "${MOUNT_ARGS[@]}" \
     "${NETWORK_ARGS[@]}" \
+    "${PORT_ARGS[@]}" \
     "${RESOURCE_ARGS[@]}" \
     "$DOCKER_IMAGE"
 fi

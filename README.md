@@ -84,6 +84,7 @@ container-here --help
 - **💾 Persistent Scripts Volume**: Creates and mounts `container-here-user-scripts` volume to `/user-scripts`
 - **📁 Custom Mount Paths**: Mount host directories with configurable read-only/read-write permissions
 - **🌐 Network Connectivity**: Connect containers to Docker networks for service integration
+- **🔌 Port Mapping**: Map host ports to container ports for service access
 - **🔄 Container Persistence**: Containers persist after exit - no more lost work!
 - **📋 Container Management**: List, attach, and manage existing containers easily
 - **🔗 Quick Reconnection**: Attach to any existing container with `--attach` command
@@ -113,6 +114,9 @@ Options:
   --mount-ro PATH   Mount host path as read-only: /host/path:/container/path
                     Shorthand for --mount /host/path:/container/path:ro
   --network NAME    Connect container to Docker network (can be used multiple times)
+  --port MAPPING    Map host port to container port: host_port:container_port[:protocol]
+                    Protocol can be 'tcp' (default), 'udp', or 'sctp'
+                    Can be used multiple times for multiple ports
   --cpu NUMBER      Limit CPU usage (e.g., 1, 1.5, 2.0)
   --memory SIZE     Limit memory usage (e.g., 512m, 1g, 2G)
   --list            List all container-here containers and their status
@@ -131,6 +135,8 @@ Examples:
   container-here --mount-ro /config:/app/config my-app # Mount /config to /app/config (read-only)
   container-here --mount /data:/data:ro --mount /logs:/logs:rw my-app # Multiple mounts
   container-here --network my-network my-app     # Connect to Docker network
+  container-here --port 8080:80 my-app           # Map host port 8080 to container port 80
+  container-here --port 8080:80:tcp --port 9090:9090:udp my-app # Multiple port mappings
   container-here --cpu 2 --memory 1g my-app      # Limit to 2 CPUs and 1GB memory
   container-here --cpu 1.5 my-app                # Limit to 1.5 CPUs
   container-here --memory 512m my-app            # Limit to 512MB memory
@@ -174,6 +180,12 @@ Examples:
 # Connect to multiple networks
 ./container-here --network frontend --network backend my-app
 
+# Map ports for web development
+./container-here --port 3000:3000 --port 8080:80 web-app
+
+# Map ports with specific protocols
+./container-here --port 8080:80:tcp --port 5432:5432:tcp database-app
+
 # List all your containers with their status and directories
 ./container-here --list
 
@@ -198,6 +210,10 @@ Examples:
 - `--network NAME`: Connect container to Docker network
   - Can be used multiple times to connect to multiple networks
   - Shows warning if network doesn't exist but continues
+- `--port MAPPING`: Map host port to container port with format `host_port:container_port[:protocol]`
+  - Protocol can be `tcp` (default), `udp`, or `sctp`
+  - Can be used multiple times for multiple port mappings
+  - Example: `--port 8080:80` or `--port 8080:80:tcp`
 - `--list`: List all container-here containers with status and mounted directories
 - `--attach NAME`: Attach to existing container by name (starts if stopped)
 - `--config`: Show configuration management options or manage settings
@@ -320,6 +336,9 @@ Configuration keys:
   default_image              Default Docker image to use (default: alpine)
   custom_mounts              Custom mount definitions in JSON format
                             Format: [{"host":"/path","container":"/path","mode":"rw|ro"}]
+  port_mappings              Port mapping definitions (simple or JSON format)
+                            Simple: '8080:80 9090:90:udp'
+                            JSON: '[{"host":"8080","container":"80","protocol":"tcp"}]'
 
 Examples:
   # Set local project config (default)
@@ -330,6 +349,9 @@ Examples:
   
   # Check which config provides a value
   container-here --config which default_image
+  
+  # Set port mappings (simple format)
+  container-here --config set port_mappings '8080:80 9090:90:udp'
   
   # Override with environment variable
   CONTAINER_HERE_DEFAULT_IMAGE=python:3.11 container-here
@@ -387,6 +409,7 @@ This file can be committed to version control, allowing team members to share th
 
 - `default_image`: Default Docker image to use (default: `alpine`)
 - `custom_mounts`: Custom mount definitions in JSON format for persistent mount configurations
+- `port_mappings`: Port mapping definitions in simple or JSON format for persistent port configurations
 - `cpu_limit`: Default CPU limit for containers (e.g., `1`, `1.5`, `2.0`)
 - `memory_limit`: Default memory limit for containers (e.g., `512m`, `1g`, `2G`)
 
@@ -564,6 +587,140 @@ git pull
 ./container-here dev-env  # Automatically applies CPU and memory limits
 ```
 
+## Port Mapping
+
+Container Here supports comprehensive port mapping to expose container services to the host system. Port mappings can be configured via CLI arguments or persistent configuration.
+
+### Port Mapping Options
+
+#### CLI Port Mapping
+
+```bash
+# Map single port (TCP is default)
+./container-here --port 8080:80 web-app
+
+# Map multiple ports
+./container-here --port 8080:80 --port 3000:3000 web-app
+
+# Specify protocols explicitly
+./container-here --port 8080:80:tcp --port 9090:9090:udp app
+
+# Database port mapping
+./container-here --port 5432:5432 database-container
+```
+
+#### Configuration-Based Port Mapping
+
+Set persistent port mappings using the configuration system:
+
+```bash
+# Simple format (recommended)
+./container-here --config set port_mappings '8080:80 3000:3000'
+
+# Multiple ports with different protocols
+./container-here --config set port_mappings '8080:80:tcp 9090:9090:udp'
+
+# JSON format (for complex scenarios)
+./container-here --config set port_mappings '[
+  {"host":"8080","container":"80","protocol":"tcp"},
+  {"host":"9090","container":"9090","protocol":"udp"}
+]'
+
+# View current port configuration
+./container-here --config list
+```
+
+#### Environment Variable Overrides
+
+```bash
+# Override port mappings with environment variables
+CONTAINER_HERE_PORT_MAPPINGS='3000:3000 8080:80' ./container-here my-app
+```
+
+### Port Mapping Formats
+
+#### Simple Format (Recommended)
+- Space-separated port mappings: `8080:80 9090:90:udp`
+- Format: `host_port:container_port[:protocol]`
+- Default protocol: `tcp`
+- Easier to type and read
+
+#### JSON Format
+- Full JSON array: `[{"host":"8080","container":"80","protocol":"tcp"}]`
+- More verbose but supports all features
+- Backward compatibility maintained
+
+### Supported Protocols
+- `tcp` (default) - Transmission Control Protocol
+- `udp` - User Datagram Protocol  
+- `sctp` - Stream Control Transmission Protocol
+
+### Port Mapping Examples
+
+#### Web Development Environment
+```bash
+# Frontend and backend development
+./container-here --config set port_mappings '3000:3000 8080:80 5432:5432'
+./container-here --config set default_image node:18
+
+# All web containers get these ports
+./container-here frontend-app     # Ports 3000, 8080, 5432 mapped
+./container-here backend-api      # Same ports automatically mapped
+
+# Override for specific containers
+./container-here --port 9000:9000 special-service
+```
+
+#### Database Services
+```bash
+# PostgreSQL container
+./container-here --port 5432:5432 --image postgres:15 database
+
+# Redis container with different host port
+./container-here --port 6380:6379 --image redis:alpine cache
+
+# Multiple database instances
+./container-here --port 5433:5432 postgres-test
+./container-here --port 5434:5432 postgres-staging
+```
+
+#### Microservices Architecture
+```bash
+# Set up port mappings for microservices
+./container-here --config set port_mappings '8001:8000 8002:8000 8003:8000'
+
+# Each service gets its own port
+./container-here --port 8001:8000 user-service
+./container-here --port 8002:8000 order-service
+./container-here --port 8003:8000 payment-service
+```
+
+### Configuration Hierarchy
+
+Port mappings follow the same configuration hierarchy as other settings:
+
+1. **CLI arguments** (`--port`) - highest priority
+2. **Environment variables** (`CONTAINER_HERE_PORT_MAPPINGS`)
+3. **Local project config** (`.container-here.conf`)
+4. **Global user config** (`~/.config/container-here/config`)
+5. **No port mappings** (default behavior)
+
+### Team Configuration Example
+
+```bash
+# Project lead sets up port mappings for team
+echo 'port_mappings=3000:3000 8080:80' > .container-here.conf
+echo 'default_image=node:18-alpine' >> .container-here.conf
+
+# Commit to version control
+git add .container-here.conf
+git commit -m "Add port mapping configuration for team"
+
+# Team members get consistent port mappings
+git pull
+./container-here dev-env  # Automatically maps ports 3000 and 8080
+```
+
 ## Volume Mounting
 
 ### Default Mounts
@@ -663,10 +820,16 @@ tests/
 # Set Node.js as your default for web projects
 ./container-here --config set default_image node:18-alpine
 
+# Set up common web development ports
+./container-here --config set port_mappings '3000:3000 8080:80 9000:9000'
+
 # Now create containers for different projects
-./container-here frontend-app       # Uses node:18-alpine
-./container-here api-server         # Uses node:18-alpine
+./container-here frontend-app       # Uses node:18-alpine with ports mapped
+./container-here api-server         # Uses node:18-alpine with ports mapped
 ./container-here --image nginx web-proxy  # Override for specific needs
+
+# Create containers with specific port mappings
+./container-here --port 3001:3000 --port 8081:80 frontend-alt
 ```
 
 #### Data Science Workflow
@@ -774,11 +937,15 @@ tests/
 ### Database and Services
 
 ```bash
-# Using specialized images (will prompt to pull if not local)
-./container-here --image postgres:15 database-work
-./container-here --image redis:alpine cache-testing
-./container-here --image mongo:6 document-db
-./container-here --image nginx:alpine web-server
+# Using specialized images with port mappings (will prompt to pull if not local)
+./container-here --port 5432:5432 --image postgres:15 database-work
+./container-here --port 6379:6379 --image redis:alpine cache-testing
+./container-here --port 27017:27017 --image mongo:6 document-db
+./container-here --port 80:80 --port 443:443 --image nginx:alpine web-server
+
+# Multiple database instances with different host ports
+./container-here --port 5433:5432 --image postgres:15 postgres-test
+./container-here --port 5434:5432 --image postgres:15 postgres-prod
 ```
 
 ## Custom Mount Path Examples
