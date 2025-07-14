@@ -10,6 +10,7 @@ Quick create container with auto mount working dir.
 - [Features](#features)
 - [Usage](#usage)
 - [Configuration](#configuration)
+- [Resource Management](#resource-management)
 - [Command Line Reference](#command-line-reference)
 - [Real-World Examples](#real-world-examples)
 - [Container Management](#container-management)
@@ -111,6 +112,9 @@ Options:
                     Can be used multiple times for multiple mounts
   --mount-ro PATH   Mount host path as read-only: /host/path:/container/path
                     Shorthand for --mount /host/path:/container/path:ro
+  --network NAME    Connect container to Docker network (can be used multiple times)
+  --cpu NUMBER      Limit CPU usage (e.g., 1, 1.5, 2.0)
+  --memory SIZE     Limit memory usage (e.g., 512m, 1g, 2G)
   --list            List all container-here containers and their status
   --attach NAME     Attach to existing container by name
   --config          Show configuration management options
@@ -126,6 +130,10 @@ Examples:
   container-here --mount /data:/app/data my-app   # Mount /data to /app/data (read-write)
   container-here --mount-ro /config:/app/config my-app # Mount /config to /app/config (read-only)
   container-here --mount /data:/data:ro --mount /logs:/logs:rw my-app # Multiple mounts
+  container-here --network my-network my-app     # Connect to Docker network
+  container-here --cpu 2 --memory 1g my-app      # Limit to 2 CPUs and 1GB memory
+  container-here --cpu 1.5 my-app                # Limit to 1.5 CPUs
+  container-here --memory 512m my-app            # Limit to 512MB memory
   container-here --list                   # List all container-here containers
   container-here --attach my-app          # Attach to existing 'my-app' container
   container-here view-scripts             # View content of scripts volume (uses config default or alpine)
@@ -379,6 +387,8 @@ This file can be committed to version control, allowing team members to share th
 
 - `default_image`: Default Docker image to use (default: `alpine`)
 - `custom_mounts`: Custom mount definitions in JSON format for persistent mount configurations
+- `cpu_limit`: Default CPU limit for containers (e.g., `1`, `1.5`, `2.0`)
+- `memory_limit`: Default memory limit for containers (e.g., `512m`, `1g`, `2G`)
 
 ### Volume Mounting
 
@@ -445,6 +455,113 @@ git commit -m "Add container configuration for team"
 # Team members automatically get the same environment
 git pull
 ./container-here dev-env    # Uses project-specific configuration
+```
+
+## Resource Management
+
+Container Here supports CPU and memory resource limits to control container resource usage and ensure predictable performance.
+
+### Resource Configuration Options
+
+#### CLI Resource Flags
+
+```bash
+# Limit CPU usage to 2 cores
+./container-here --cpu 2 my-app
+
+# Limit memory to 1GB
+./container-here --memory 1g my-app
+
+# Combine CPU and memory limits
+./container-here --cpu 1.5 --memory 512m my-app
+
+# Use fractional CPU limits
+./container-here --cpu 0.5 my-app  # Half CPU core
+```
+
+#### Configuration-Based Resource Limits
+
+Set persistent resource limits using the configuration system:
+
+```bash
+# Set default CPU limit for all containers
+./container-here --config set cpu_limit 2.0
+
+# Set default memory limit for all containers  
+./container-here --config set memory_limit 1g
+
+# Set global defaults
+./container-here --config set --global cpu_limit 1.5
+./container-here --config set --global memory_limit 2g
+
+# View current resource configuration
+./container-here --config list
+```
+
+#### Environment Variable Overrides
+
+```bash
+# Override resource limits with environment variables
+CONTAINER_HERE_CPU_LIMIT=3 ./container-here my-app
+CONTAINER_HERE_MEMORY_LIMIT=2g ./container-here my-app
+```
+
+### Resource Limit Formats
+
+#### CPU Limits
+- Integer values: `1`, `2`, `4` (number of CPU cores)
+- Decimal values: `0.5`, `1.5`, `2.5` (fractional CPU cores)
+- Docker equivalent: `--cpus` flag
+
+#### Memory Limits
+- Numbers with units: `512m`, `1g`, `2G`, `1024M`
+- Raw numbers: `1073741824` (bytes)
+- Supported units: `b` (bytes), `k` (KB), `m` (MB), `g` (GB)
+- Docker equivalent: `--memory` flag
+
+### Configuration Hierarchy
+
+Resource limits follow the same configuration hierarchy as other settings:
+
+1. **CLI arguments** (`--cpu`, `--memory`) - highest priority
+2. **Environment variables** (`CONTAINER_HERE_CPU_LIMIT`, `CONTAINER_HERE_MEMORY_LIMIT`)
+3. **Local project config** (`.container-here.conf`)
+4. **Global user config** (`~/.config/container-here/config`)
+5. **No limits** (default behavior)
+
+### Resource Management Examples
+
+#### Development Environment with Resource Limits
+
+```bash
+# Set up a resource-constrained development environment
+./container-here --config set cpu_limit 1.5
+./container-here --config set memory_limit 1g
+./container-here --config set default_image node:18
+
+# All containers will now use these resource limits
+./container-here frontend-app    # Uses 1.5 CPU, 1GB memory
+./container-here backend-api     # Uses 1.5 CPU, 1GB memory
+
+# Override for specific containers
+./container-here --cpu 2 --memory 2g build-server
+```
+
+#### Team Configuration for Consistent Resource Usage
+
+```bash
+# Project lead sets up resource constraints
+echo 'cpu_limit=1.5' > .container-here.conf
+echo 'memory_limit=1g' >> .container-here.conf
+echo 'default_image=node:18-alpine' >> .container-here.conf
+
+# Commit to version control
+git add .container-here.conf
+git commit -m "Add resource limits for consistent development environment"
+
+# Team members get consistent resource usage
+git pull
+./container-here dev-env  # Automatically applies CPU and memory limits
 ```
 
 ## Volume Mounting
