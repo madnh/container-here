@@ -106,6 +106,60 @@ teardown() {
     [ "${#CLI_CUSTOM_MOUNTS[@]}" -eq 0 ]
 }
 
+# Test network functionality
+@test "network CLI array is properly initialized" {
+    export BATS_TEST_MODE=1
+    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    # Test that CLI_NETWORKS array is initialized
+    [ "${#CLI_NETWORKS[@]}" -eq 0 ]
+}
+
+@test "parse_arguments function handles --network option correctly" {
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/../container-here"
+    parse_arguments --network my-network my-app
+    [ "${CLI_NETWORKS[0]}" = "my-network" ]
+    [ "$CONTAINER_NAME_ARG" = "my-app" ]
+}
+
+@test "parse_arguments function handles multiple --network options" {
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/../container-here"
+    parse_arguments --network net1 --network net2 --network net3 my-app
+    [ "${#CLI_NETWORKS[@]}" -eq 3 ]
+    [ "${CLI_NETWORKS[0]}" = "net1" ]
+    [ "${CLI_NETWORKS[1]}" = "net2" ]
+    [ "${CLI_NETWORKS[2]}" = "net3" ]
+}
+
+@test "validate_network_exists returns true when network exists" {
+    export MOCK_NETWORK_EXISTS="true"
+    export MOCK_NETWORK_NAME="my-network"
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    run validate_network_exists "my-network"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_network_exists returns false and shows warning when network doesn't exist" {
+    export MOCK_NETWORK_EXISTS="false"
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    run validate_network_exists "nonexistent-network"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Warning: Network 'nonexistent-network' does not exist"* ]]
+}
+
 # Test shell detection for existing containers
 @test "script detects valid shell in running container" {
     export MOCK_CONTAINER_RUNNING="true"

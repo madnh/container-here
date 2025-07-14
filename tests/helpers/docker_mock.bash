@@ -133,6 +133,27 @@ mock_docker_pull() {
     fi
 }
 
+# Mock docker network ls command
+mock_docker_network_ls() {
+    if [[ "$*" == *"--format"* ]]; then
+        if [[ "$MOCK_NETWORK_EXISTS" == "true" ]]; then
+            echo "$MOCK_NETWORK_NAME"
+        fi
+        # Always show default networks
+        echo "bridge"
+        echo "host"
+        echo "none"
+    else
+        echo "NETWORK ID     NAME      DRIVER    SCOPE"
+        echo "1234567890ab   bridge    bridge    local"
+        echo "2345678901bc   host      host      local"
+        echo "3456789012cd   none      null      local"
+        if [[ "$MOCK_NETWORK_EXISTS" == "true" ]]; then
+            echo "4567890123de   $MOCK_NETWORK_NAME   bridge    local"
+        fi
+    fi
+}
+
 # Mock curl command for Docker Hub API
 curl() {
     if [[ "$*" == *"hub.docker.com"* ]]; then
@@ -192,6 +213,18 @@ docker() {
             shift
             mock_docker_pull "$@"
             ;;
+        "network")
+            case "$2" in
+                "ls")
+                    shift 2
+                    mock_docker_network_ls "$@"
+                    ;;
+                *)
+                    echo "Unknown docker network command: $2"
+                    return 1
+                    ;;
+            esac
+            ;;
         *)
             echo "Unknown docker command: $1"
             return 1
@@ -215,6 +248,8 @@ reset_docker_mocks() {
     unset MOCK_IMAGE_EXISTS_LOCALLY
     unset MOCK_IMAGE_EXISTS_ON_HUB
     unset MOCK_DOCKER_PULL_FAIL
+    unset MOCK_NETWORK_EXISTS
+    unset MOCK_NETWORK_NAME
 }
 
 # Export functions for use in tests
@@ -229,4 +264,5 @@ export -f mock_docker_rm
 export -f mock_docker_start
 export -f mock_docker_image_inspect
 export -f mock_docker_pull
+export -f mock_docker_network_ls
 export -f reset_docker_mocks

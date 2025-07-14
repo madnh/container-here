@@ -82,6 +82,7 @@ container-here --help
 - **📥 Smart Image Pulling**: Prompts user confirmation before pulling images from Docker Hub
 - **💾 Persistent Scripts Volume**: Creates and mounts `container-here-user-scripts` volume to `/user-scripts`
 - **📁 Custom Mount Paths**: Mount host directories with configurable read-only/read-write permissions
+- **🌐 Network Connectivity**: Connect containers to Docker networks for service integration
 - **🔄 Container Persistence**: Containers persist after exit - no more lost work!
 - **📋 Container Management**: List, attach, and manage existing containers easily
 - **🔗 Quick Reconnection**: Attach to any existing container with `--attach` command
@@ -159,6 +160,12 @@ Examples:
 # Multiple custom mounts with different permissions
 ./container-here --mount /home/user/data:/app/data:rw --mount-ro /home/user/config:/app/config my-app
 
+# Connect container to Docker network
+./container-here --network my-network my-app
+
+# Connect to multiple networks
+./container-here --network frontend --network backend my-app
+
 # List all your containers with their status and directories
 ./container-here --list
 
@@ -180,6 +187,9 @@ Examples:
   - Can be used multiple times for multiple mounts
 - `--mount-ro PATH`: Mount host path as read-only with format `/host/path:/container/path`
   - Shorthand for `--mount /host/path:/container/path:ro`
+- `--network NAME`: Connect container to Docker network
+  - Can be used multiple times to connect to multiple networks
+  - Shows warning if network doesn't exist but continues
 - `--list`: List all container-here containers with status and mounted directories
 - `--attach NAME`: Attach to existing container by name (starts if stopped)
 - `--config`: Show configuration management options or manage settings

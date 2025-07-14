@@ -162,6 +162,7 @@ show_usage() {
   echo "                    Can be used multiple times for multiple mounts"
   echo "  --mount-ro PATH   Mount host path as read-only: /host/path:/container/path"
   echo "                    Shorthand for --mount /host/path:/container/path:ro"
+  echo "  --network NAME    Connect container to Docker network (can be used multiple times)"
   echo "  --list            List all container-here containers and their status"
   echo "  --attach NAME     Attach to existing container by name"
   echo "  --debug           Print the docker command instead of executing it"
@@ -178,6 +179,8 @@ show_usage() {
   echo "  $script_name --mount /data:/app/data my-app   # Mount /data to /app/data (read-write)"
   echo "  $script_name --mount-ro /config:/app/config my-app # Mount /config to /app/config (read-only)"
   echo "  $script_name --mount /data:/data:ro --mount /logs:/logs:rw my-app # Multiple mounts"
+  echo "  $script_name --network my-network my-app     # Connect to Docker network"
+  echo "  $script_name --network net1 --network net2 my-app # Connect to multiple networks"
   echo "  $script_name --list                   # List all container-here containers"
   echo "  $script_name --attach my-app          # Attach to existing 'my-app' container"
   echo "  $script_name view-scripts             # View content of scripts volume (uses config default or alpine)"
@@ -352,6 +355,8 @@ parse_arguments() {
   CONTAINER_NAME_ARG=""
   # Array to store custom mounts from CLI
   CLI_CUSTOM_MOUNTS=()
+  # Array to store networks from CLI
+  CLI_NETWORKS=()
   # Debug mode flag
   DEBUG_MODE=false
 
@@ -379,6 +384,16 @@ parse_arguments() {
         exit 1
       fi
       CLI_CUSTOM_MOUNTS+=("$2:ro")
+      shift 2
+      ;;
+
+    --network)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --network requires a value"
+        echo "Usage: --network <network-name>"
+        exit 1
+      fi
+      CLI_NETWORKS+=("$2")
       shift 2
       ;;
 
@@ -662,6 +677,19 @@ validate_mount_format() {
   return 0
 }
 
+# Function to validate network exists
+validate_network_exists() {
+  local network="$1"
+  
+  # Check if network exists
+  if ! docker network ls --format "{{.Name}}" 2>/dev/null | grep -q "^${network}$"; then
+    echo "Warning: Network '$network' does not exist" >&2
+    return 1
+  fi
+  
+  return 0
+}
+
 # Function to build mount arguments for docker run
 build_mount_args() {
   local -a mount_args=()
@@ -709,6 +737,23 @@ build_mount_args() {
   
   # Output mount arguments
   printf '%s\n' "${mount_args[@]}"
+}
+
+# Function to build network arguments for docker run
+build_network_args() {
+  local -a network_args=()
+  
+  # Add CLI networks
+  if [[ ${#CLI_NETWORKS[@]} -gt 0 ]]; then
+    for network in "${CLI_NETWORKS[@]}"; do
+      # Validate network exists (show warning but continue)
+      validate_network_exists "$network"
+      network_args+=("--network" "$network")
+    done
+  fi
+  
+  # Output network arguments
+  printf '%s\n' "${network_args[@]}"
 }
 
 # Function to view scripts volume content
@@ -863,6 +908,12 @@ while IFS= read -r line; do
   MOUNT_ARGS+=("$line")
 done < <(build_mount_args)
 
+# Build network arguments
+NETWORK_ARGS=()
+while IFS= read -r line; do
+  NETWORK_ARGS+=("$line")
+done < <(build_network_args)
+
 # Display mount information
 echo "Mount configuration:"
 echo "  $(pwd) -> /app (rw)"
@@ -893,6 +944,14 @@ if [[ ${#CLI_CUSTOM_MOUNTS[@]} -gt 0 ]]; then
   done
 fi
 
+# Show networks
+if [[ ${#CLI_NETWORKS[@]} -gt 0 ]]; then
+  echo "Networks:"
+  for network in "${CLI_NETWORKS[@]}"; do
+    echo "  $network"
+  done
+fi
+
 if [[ "$DEBUG_MODE" == "true" ]]; then
   echo ""
   echo "Debug: Docker command that would be executed:"
@@ -901,10 +960,14 @@ if [[ "$DEBUG_MODE" == "true" ]]; then
   for arg in "${MOUNT_ARGS[@]}"; do
     echo "  \"$arg\" \\"
   done
+  for arg in "${NETWORK_ARGS[@]}"; do
+    echo "  \"$arg\" \\"
+  done
   echo "  \"$DOCKER_IMAGE\""
 else
   docker run -it \
     --name "$CONTAINER_NAME" \
     "${MOUNT_ARGS[@]}" \
+    "${NETWORK_ARGS[@]}" \
     "$DOCKER_IMAGE"
 fi
