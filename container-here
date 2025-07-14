@@ -256,6 +256,38 @@ validate_custom_mounts() {
   return 0
 }
 
+# Function to validate CPU limit value
+validate_cpu_limit() {
+  local cpu_limit="$1"
+  
+  # Check if it's a valid number (integer or decimal)
+  if [[ ! "$cpu_limit" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "Error: CPU limit must be a positive number (e.g., 1, 1.5, 2.0)"
+    return 1
+  fi
+  
+  # Check if it's greater than 0 (use awk for floating point comparison)
+  if ! awk "BEGIN {exit !($cpu_limit > 0)}" 2>/dev/null; then
+    echo "Error: CPU limit must be greater than 0"
+    return 1
+  fi
+  
+  return 0
+}
+
+# Function to validate memory limit value
+validate_memory_limit() {
+  local memory_limit="$1"
+  
+  # Check if it matches valid memory format (number followed by optional unit)
+  if [[ ! "$memory_limit" =~ ^[0-9]+[bkmgBKMG]?$ ]]; then
+    echo "Error: Memory limit must be a number optionally followed by b, k, m, g (e.g., 512m, 1g, 2G, 1024)"
+    return 1
+  fi
+  
+  return 0
+}
+
 # Function to list all config values
 list_config() {
   echo "Current configuration (with sources):"
@@ -266,6 +298,24 @@ list_config() {
   local default_image=$(get_config_value "default_image" "alpine")
   local default_image_source=$(get_config_source "default_image")
   echo "  default_image=$default_image  [$default_image_source]"
+  
+  echo ""
+  echo "Resource settings:"
+  local cpu_limit=$(get_config_value "cpu_limit" "")
+  local cpu_limit_source=$(get_config_source "cpu_limit")
+  if [[ -n "$cpu_limit" ]]; then
+    echo "  cpu_limit=$cpu_limit  [$cpu_limit_source]"
+  else
+    echo "  cpu_limit=unlimited  [$cpu_limit_source]"
+  fi
+  
+  local memory_limit=$(get_config_value "memory_limit" "")
+  local memory_limit_source=$(get_config_source "memory_limit")
+  if [[ -n "$memory_limit" ]]; then
+    echo "  memory_limit=$memory_limit  [$memory_limit_source]"
+  else
+    echo "  memory_limit=unlimited  [$memory_limit_source]"
+  fi
   
   echo ""
   echo "Mount settings:"
@@ -323,6 +373,8 @@ show_usage() {
   echo "  --mount-ro PATH   Mount host path as read-only: /host/path:/container/path"
   echo "                    Shorthand for --mount /host/path:/container/path:ro"
   echo "  --network NAME    Connect container to Docker network (can be used multiple times)"
+  echo "  --cpu NUMBER      Limit CPU usage (e.g., 1, 1.5, 2.0)"
+  echo "  --memory SIZE     Limit memory usage (e.g., 512m, 1g, 2G)"
   echo "  --list            List all container-here containers and their status"
   echo "  --attach NAME     Attach to existing container by name"
   echo "  --debug           Print the docker command instead of executing it"
@@ -341,6 +393,9 @@ show_usage() {
   echo "  $script_name --mount /data:/data:ro --mount /logs:/logs:rw my-app # Multiple mounts"
   echo "  $script_name --network my-network my-app     # Connect to Docker network"
   echo "  $script_name --network net1 --network net2 my-app # Connect to multiple networks"
+  echo "  $script_name --cpu 2 --memory 1g my-app      # Limit to 2 CPUs and 1GB memory"
+  echo "  $script_name --cpu 1.5 my-app                # Limit to 1.5 CPUs"
+  echo "  $script_name --memory 512m my-app            # Limit to 512MB memory"
   echo "  $script_name --list                   # List all container-here containers"
   echo "  $script_name --attach my-app          # Attach to existing 'my-app' container"
   echo "  $script_name view-scripts             # View content of scripts volume (uses config default or alpine)"
@@ -366,10 +421,12 @@ show_config_help() {
   echo "  default_image              Default Docker image to use (default: alpine)"
   echo "  custom_mounts              Custom mount definitions in JSON format"
   echo "                            Format: [{\"host\":\"/path\",\"container\":\"/path\",\"mode\":\"rw|ro\"}]"
+  echo "  cpu_limit                  Default CPU limit (e.g., 1, 1.5, 2.0)"
+  echo "  memory_limit               Default memory limit (e.g., 512m, 1g, 2G)"
   echo ""
   echo "Configuration sources (highest to lowest priority):"
-  echo "  1. Command-line arguments (--image, --mount)"
-  echo "  2. Environment variables (CONTAINER_HERE_DEFAULT_IMAGE, CONTAINER_HERE_CUSTOM_MOUNTS)"
+  echo "  1. Command-line arguments (--image, --mount, --cpu, --memory)"
+  echo "  2. Environment variables (CONTAINER_HERE_DEFAULT_IMAGE, CONTAINER_HERE_CUSTOM_MOUNTS, CONTAINER_HERE_CPU_LIMIT, CONTAINER_HERE_MEMORY_LIMIT)"
   echo "  3. Local project config (.container-here.conf in current directory)"
   echo "  4. Global/User config (~/.config/container-here/config)"
   echo "  5. Built-in defaults"
@@ -389,6 +446,11 @@ show_config_help() {
   echo "  "
   echo "  # Set custom mounts in local config (default)"
   echo "  $script_name --config set custom_mounts '[{\"host\":\"/data\",\"container\":\"/app/data\",\"mode\":\"rw\"}]'"
+  echo "  "
+  echo "  # Set resource limits"
+  echo "  $script_name --config set cpu_limit 2.0"
+  echo "  $script_name --config set memory_limit 1g"
+  echo "  $script_name --config set --global cpu_limit 1.5"
 }
 
 # Function to handle config commands
@@ -454,9 +516,49 @@ handle_config_command() {
       fi
       ;;
 
+    cpu_limit)
+      if [[ $# -ne 2 ]]; then
+        echo "Error: cpu_limit requires exactly one value"
+        echo "Usage: --config set cpu_limit <number>"
+        exit 1
+      fi
+      local value="$2"
+      if validate_cpu_limit "$value"; then
+        set_config_value "$key" "$value" "$target"
+        if [[ "$target" == "global" ]]; then
+          echo "Set $key = $value (global)"
+        else
+          echo "Set $key = $value (local)"
+        fi
+      else
+        echo "Error: Invalid cpu_limit value"
+        exit 1
+      fi
+      ;;
+
+    memory_limit)
+      if [[ $# -ne 2 ]]; then
+        echo "Error: memory_limit requires exactly one value"
+        echo "Usage: --config set memory_limit <size>"
+        exit 1
+      fi
+      local value="$2"
+      if validate_memory_limit "$value"; then
+        set_config_value "$key" "$value" "$target"
+        if [[ "$target" == "global" ]]; then
+          echo "Set $key = $value (global)"
+        else
+          echo "Set $key = $value (local)"
+        fi
+      else
+        echo "Error: Invalid memory_limit value"
+        exit 1
+      fi
+      ;;
+
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image, custom_mounts"
+      echo "Available keys: default_image, custom_mounts, cpu_limit, memory_limit"
       exit 1
       ;;
     esac
@@ -491,9 +593,29 @@ handle_config_command() {
       echo "$value"
       ;;
 
+    cpu_limit)
+      if [[ $# -ne 1 ]]; then
+        echo "Error: cpu_limit takes no additional arguments"
+        echo "Usage: --config get cpu_limit"
+        exit 1
+      fi
+      value=$(get_config_value "$key" "")
+      echo "$value"
+      ;;
+
+    memory_limit)
+      if [[ $# -ne 1 ]]; then
+        echo "Error: memory_limit takes no additional arguments"
+        echo "Usage: --config get memory_limit"
+        exit 1
+      fi
+      value=$(get_config_value "$key" "")
+      echo "$value"
+      ;;
+
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image, custom_mounts"
+      echo "Available keys: default_image, custom_mounts, cpu_limit, memory_limit"
       exit 1
       ;;
     esac
@@ -509,7 +631,7 @@ handle_config_command() {
     fi
     local key="$1"
     case "$key" in
-    default_image | custom_mounts)
+    default_image | custom_mounts | cpu_limit | memory_limit)
       local source=$(get_config_source "$key")
       local value=$(get_config_value "$key" "")
       echo "$key = $value"
@@ -517,7 +639,7 @@ handle_config_command() {
       ;;
     *)
       echo "Error: Unknown configuration key '$key'"
-      echo "Available keys: default_image, custom_mounts"
+      echo "Available keys: default_image, custom_mounts, cpu_limit, memory_limit"
       exit 1
       ;;
     esac
@@ -582,6 +704,9 @@ parse_arguments() {
   CLI_CUSTOM_MOUNTS=()
   # Array to store networks from CLI
   CLI_NETWORKS=()
+  # Resource limits from CLI
+  CLI_CPU_LIMIT=""
+  CLI_MEMORY_LIMIT=""
   # Debug mode flag
   DEBUG_MODE=false
 
@@ -619,6 +744,36 @@ parse_arguments() {
         exit 1
       fi
       CLI_NETWORKS+=("$2")
+      shift 2
+      ;;
+
+    --cpu)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --cpu requires a value"
+        echo "Usage: --cpu <number>"
+        exit 1
+      fi
+      if validate_cpu_limit "$2"; then
+        CLI_CPU_LIMIT="$2"
+      else
+        echo "Invalid CPU limit value"
+        exit 1
+      fi
+      shift 2
+      ;;
+
+    --memory)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --memory requires a value"
+        echo "Usage: --memory <size>"
+        exit 1
+      fi
+      if validate_memory_limit "$2"; then
+        CLI_MEMORY_LIMIT="$2"
+      else
+        echo "Invalid memory limit value"
+        exit 1
+      fi
       shift 2
       ;;
 
@@ -981,6 +1136,45 @@ build_network_args() {
   printf '%s\n' "${network_args[@]}"
 }
 
+# Function to build resource arguments for docker run
+build_resource_args() {
+  local -a resource_args=()
+  
+  # Determine CPU limit (CLI overrides config)
+  local cpu_limit="$CLI_CPU_LIMIT"
+  if [[ -z "$cpu_limit" ]]; then
+    cpu_limit=$(get_config_value "cpu_limit" "")
+  fi
+  
+  if [[ -n "$cpu_limit" ]]; then
+    resource_args+=("--cpus" "$cpu_limit")
+  fi
+  
+  # Determine memory limit (CLI overrides config)
+  local memory_limit="$CLI_MEMORY_LIMIT"
+  if [[ -z "$memory_limit" ]]; then
+    memory_limit=$(get_config_value "memory_limit" "")
+  fi
+  
+  if [[ -n "$memory_limit" ]]; then
+    resource_args+=("--memory" "$memory_limit")
+  fi
+  
+  # Output resource arguments
+  printf '%s\n' "${resource_args[@]}"
+}
+
+# Function to build hostname arguments for docker run
+build_hostname_args() {
+  local -a hostname_args=()
+  
+  # Set hostname to container-here-<project-name>
+  hostname_args+=("--hostname" "container-here-$BASE_NAME")
+  
+  # Output hostname arguments
+  printf '%s\n' "${hostname_args[@]}"
+}
+
 # Function to view scripts volume content
 view_scripts_volume() {
   local view_image="$1"
@@ -1039,6 +1233,7 @@ view_scripts_volume() {
   # Run temporary container with volume mounted
   docker run -it --rm \
     --name "$temp_container" \
+    --hostname "$temp_container" \
     -v "container-here-user-scripts:/user-scripts" \
     -w "/user-scripts" \
     "$view_image"
@@ -1052,6 +1247,8 @@ else
   DOCKER_IMAGE=$(get_config_value "default_image" "alpine")
   CONTAINER_NAME_ARG=""
   CLI_CUSTOM_MOUNTS=()
+  CLI_CPU_LIMIT=""
+  CLI_MEMORY_LIMIT=""
 fi
 
 # Get base name from argument or use current folder name
@@ -1136,8 +1333,26 @@ done < <(build_mount_args)
 # Build network arguments
 NETWORK_ARGS=()
 while IFS= read -r line; do
-  NETWORK_ARGS+=("$line")
+  if [[ -n "$line" ]]; then
+    NETWORK_ARGS+=("$line")
+  fi
 done < <(build_network_args)
+
+# Build resource arguments
+RESOURCE_ARGS=()
+while IFS= read -r line; do
+  if [[ -n "$line" ]]; then
+    RESOURCE_ARGS+=("$line")
+  fi
+done < <(build_resource_args)
+
+# Build hostname arguments
+HOSTNAME_ARGS=()
+while IFS= read -r line; do
+  if [[ -n "$line" ]]; then
+    HOSTNAME_ARGS+=("$line")
+  fi
+done < <(build_hostname_args)
 
 # Display mount information
 echo "Mount configuration:"
@@ -1177,22 +1392,44 @@ if [[ ${#CLI_NETWORKS[@]} -gt 0 ]]; then
   done
 fi
 
+# Show resource limits
+if [[ ${#RESOURCE_ARGS[@]} -gt 0 ]]; then
+  echo "Resource limits:"
+  i=0
+  while [[ $i -lt ${#RESOURCE_ARGS[@]} ]]; do
+    if [[ "${RESOURCE_ARGS[$i]}" == "--cpus" ]]; then
+      echo "  CPU limit: ${RESOURCE_ARGS[$((i+1))]}"
+    elif [[ "${RESOURCE_ARGS[$i]}" == "--memory" ]]; then
+      echo "  Memory limit: ${RESOURCE_ARGS[$((i+1))]}"
+    fi
+    ((i+=2))
+  done
+fi
+
 if [[ "$DEBUG_MODE" == "true" ]]; then
   echo ""
   echo "Debug: Docker command that would be executed:"
   echo "docker run -it \\"
   echo "  --name \"$CONTAINER_NAME\" \\"
+  for arg in "${HOSTNAME_ARGS[@]}"; do
+    echo "  \"$arg\" \\"
+  done
   for arg in "${MOUNT_ARGS[@]}"; do
     echo "  \"$arg\" \\"
   done
   for arg in "${NETWORK_ARGS[@]}"; do
     echo "  \"$arg\" \\"
   done
+  for arg in "${RESOURCE_ARGS[@]}"; do
+    echo "  \"$arg\" \\"
+  done
   echo "  \"$DOCKER_IMAGE\""
 else
   docker run -it \
     --name "$CONTAINER_NAME" \
+    "${HOSTNAME_ARGS[@]}" \
     "${MOUNT_ARGS[@]}" \
     "${NETWORK_ARGS[@]}" \
+    "${RESOURCE_ARGS[@]}" \
     "$DOCKER_IMAGE"
 fi

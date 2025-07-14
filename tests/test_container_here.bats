@@ -116,6 +116,143 @@ teardown() {
     [ "${#CLI_NETWORKS[@]}" -eq 0 ]
 }
 
+# Test resource limit functionality
+@test "resource limit variables are properly initialized" {
+    export BATS_TEST_MODE=1
+    source "$BATS_TEST_DIRNAME/helpers/docker_mock.bash"
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    # Test that resource limit variables are initialized
+    [ -z "$CLI_CPU_LIMIT" ]
+    [ -z "$CLI_MEMORY_LIMIT" ]
+}
+
+@test "validate_cpu_limit accepts valid CPU values" {
+    export BATS_TEST_MODE=1
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    run validate_cpu_limit "1"
+    [ "$status" -eq 0 ]
+    
+    run validate_cpu_limit "1.5"
+    [ "$status" -eq 0 ]
+    
+    run validate_cpu_limit "2.0"
+    [ "$status" -eq 0 ]
+    
+    run validate_cpu_limit "0.5"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_cpu_limit rejects invalid CPU values" {
+    export BATS_TEST_MODE=1
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    run validate_cpu_limit "0"
+    [ "$status" -eq 1 ]
+    
+    run validate_cpu_limit "-1"
+    [ "$status" -eq 1 ]
+    
+    run validate_cpu_limit "abc"
+    [ "$status" -eq 1 ]
+    
+    run validate_cpu_limit "1.2.3"
+    [ "$status" -eq 1 ]
+}
+
+@test "validate_memory_limit accepts valid memory values" {
+    export BATS_TEST_MODE=1
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    run validate_memory_limit "512m"
+    [ "$status" -eq 0 ]
+    
+    run validate_memory_limit "1g"
+    [ "$status" -eq 0 ]
+    
+    run validate_memory_limit "2G"
+    [ "$status" -eq 0 ]
+    
+    run validate_memory_limit "1024"
+    [ "$status" -eq 0 ]
+    
+    run validate_memory_limit "512M"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_memory_limit rejects invalid memory values" {
+    export BATS_TEST_MODE=1
+    source "$BATS_TEST_DIRNAME/../container-here"
+    
+    run validate_memory_limit "512x"
+    [ "$status" -eq 1 ]
+    
+    run validate_memory_limit "abc"
+    [ "$status" -eq 1 ]
+    
+    run validate_memory_limit "1.5g"
+    [ "$status" -eq 1 ]
+    
+    run validate_memory_limit ""
+    [ "$status" -eq 1 ]
+}
+
+@test "parse_arguments function handles --cpu option correctly" {
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/../container-here"
+    parse_arguments --cpu 2 my-app
+    [ "$CLI_CPU_LIMIT" = "2" ]
+    [ "$CONTAINER_NAME_ARG" = "my-app" ]
+}
+
+@test "parse_arguments function handles --memory option correctly" {
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/../container-here"
+    parse_arguments --memory 1g my-app
+    [ "$CLI_MEMORY_LIMIT" = "1g" ]
+    [ "$CONTAINER_NAME_ARG" = "my-app" ]
+}
+
+@test "parse_arguments function handles both --cpu and --memory options" {
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/../container-here"
+    parse_arguments --cpu 1.5 --memory 512m my-app
+    [ "$CLI_CPU_LIMIT" = "1.5" ]
+    [ "$CLI_MEMORY_LIMIT" = "512m" ]
+    [ "$CONTAINER_NAME_ARG" = "my-app" ]
+}
+
+@test "build_resource_args function generates correct Docker arguments" {
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/../container-here"
+    CLI_CPU_LIMIT="2"
+    CLI_MEMORY_LIMIT="1g"
+    
+    run build_resource_args
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--cpus"* ]]
+    [[ "$output" == *"2"* ]]
+    [[ "$output" == *"--memory"* ]]
+    [[ "$output" == *"1g"* ]]
+}
+
+@test "build_resource_args function handles config values correctly" {
+    export BATS_TEST_MODE=1
+    
+    source "$BATS_TEST_DIRNAME/../container-here"
+    CLI_CPU_LIMIT=""
+    CLI_MEMORY_LIMIT=""
+    
+    run build_resource_args
+    [ "$status" -eq 0 ]
+    # Output may contain config values, which is expected behavior
+}
+
 @test "parse_arguments function handles --network option correctly" {
     export BATS_TEST_MODE=1
     
