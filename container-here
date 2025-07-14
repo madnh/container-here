@@ -11,38 +11,175 @@ ensure_config_dir() {
   fi
 }
 
-# Function to read config value
+# Function to read config value (wrapper for backward compatibility)
 get_config_value() {
-  local key="$1"
-  local default_value="$2"
+  get_config_value_multi "$1" "$2"
+}
 
-  if [[ -f "$CONFIG_FILE" ]]; then
+# Function to set config value in specific file
+set_config_value_in_file() {
+  local config_file="$1"
+  local key="$2"
+  local value="$3"
+  
+  # Create file if it doesn't exist
+  if [[ ! -f "$config_file" ]]; then
+    touch "$config_file"
+  fi
+  
+  # Remove existing key if present
+  grep -v "^$key=" "$config_file" >"$config_file.tmp" 2>/dev/null || true
+  mv "$config_file.tmp" "$config_file"
+  
+  # Add new key=value
+  echo "$key=$value" >>"$config_file"
+}
+
+# Function to set config value (default to user config)
+set_config_value() {
+  local key="$1"
+  local value="$2"
+  local target="${3:-user}"  # Default to user config
+  
+  case "$target" in
+    "local")
+      local local_config="$PWD/$LOCAL_CONFIG_FILE"
+      set_config_value_in_file "$local_config" "$key" "$value"
+      ;;
+    "user")
+      ensure_config_dir
+      set_config_value_in_file "$CONFIG_FILE" "$key" "$value"
+      ;;
+    *)
+      echo "Error: Invalid config target. Use 'local' or 'user'" >&2
+      return 1
+      ;;
+  esac
+}
+
+# Local project configuration file name
+LOCAL_CONFIG_FILE=".container-here.conf"
+
+# Function to find local config file
+find_local_config() {
+  if [[ -f "$PWD/$LOCAL_CONFIG_FILE" ]]; then
+    echo "$PWD/$LOCAL_CONFIG_FILE"
+    return 0
+  fi
+  return 1
+}
+
+# Function to read config value from specific file
+get_config_value_from_file() {
+  local config_file="$1"
+  local key="$2"
+  
+  if [[ -f "$config_file" ]]; then
     local value
-    value=$(grep "^$key=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2- | head -n1)
+    value=$(grep "^$key=" "$config_file" 2>/dev/null | cut -d'=' -f2- | head -n1)
     if [[ -n "$value" ]]; then
       echo "$value"
       return 0
     fi
   fi
+  
+  return 1
+}
 
+# Function to get config value from environment variable
+get_env_config_value() {
+  local key="$1"
+  # Convert to uppercase in a more portable way
+  local env_var="CONTAINER_HERE_$(echo "$key" | tr '[:lower:]' '[:upper:]')"
+  
+  # Use eval for indirect variable reference (more portable)
+  local value
+  eval "value=\${$env_var:-}"
+  
+  if [[ -n "$value" ]]; then
+    echo "$value"
+    return 0
+  fi
+  
+  return 1
+}
+
+# Function to get config value from all sources with precedence
+get_config_value_multi() {
+  local key="$1"
+  local default_value="$2"
+  
+  # 1. Check environment variable (highest priority)
+  local value
+  if value=$(get_env_config_value "$key"); then
+    echo "$value"
+    return 0
+  fi
+  
+  # 2. Check local project config
+  local local_config
+  if local_config=$(find_local_config); then
+    if value=$(get_config_value_from_file "$local_config" "$key"); then
+      echo "$value"
+      return 0
+    fi
+  fi
+  
+  # 3. Check user config
+  if value=$(get_config_value_from_file "$CONFIG_FILE" "$key"); then
+    echo "$value"
+    return 0
+  fi
+  
+  # 4. Return default
   echo "$default_value"
 }
 
-# Function to set config value
-set_config_value() {
+# Function to identify which config source provides a value
+get_config_source() {
   local key="$1"
-  local value="$2"
-
-  ensure_config_dir
-
-  # Remove existing key if present
-  if [[ -f "$CONFIG_FILE" ]]; then
-    grep -v "^$key=" "$CONFIG_FILE" >"$CONFIG_FILE.tmp" 2>/dev/null || true
-    mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+  
+  # Check environment variable
+  if get_env_config_value "$key" >/dev/null 2>&1; then
+    local env_var="CONTAINER_HERE_$(echo "$key" | tr '[:lower:]' '[:upper:]')"
+    echo "environment ($env_var)"
+    return 0
   fi
+  
+  # Check local project config
+  local local_config
+  if local_config=$(find_local_config); then
+    if get_config_value_from_file "$local_config" "$key" >/dev/null 2>&1; then
+      echo "local ($local_config)"
+      return 0
+    fi
+  fi
+  
+  # Check user config
+  if get_config_value_from_file "$CONFIG_FILE" "$key" >/dev/null 2>&1; then
+    echo "user ($CONFIG_FILE)"
+    return 0
+  fi
+  
+  echo "default"
+}
 
-  # Add new key=value
-  echo "$key=$value" >>"$CONFIG_FILE"
+# Function to list all configuration sources in precedence order
+list_config_sources() {
+  echo "Configuration sources (highest to lowest priority):"
+  echo "1. Command-line arguments (overrides all)"
+  echo "2. Environment variables (CONTAINER_HERE_*)"
+  
+  # Check if local config exists
+  local local_config
+  if local_config=$(find_local_config); then
+    echo "3. Local project config: $local_config"
+  else
+    echo "3. Local project config: not found (./$LOCAL_CONFIG_FILE)"
+  fi
+  
+  echo "4. User config: $CONFIG_FILE"
+  echo "5. Built-in defaults"
 }
 
 
@@ -121,25 +258,48 @@ validate_custom_mounts() {
 
 # Function to list all config values
 list_config() {
-  if [[ -f "$CONFIG_FILE" ]]; then
-    echo "Current configuration:"
-    echo ""
-    echo "General settings:"
-    grep "^default_image=" "$CONFIG_FILE" 2>/dev/null || echo "default_image=alpine (default)"
-    echo ""
-    echo "Mount settings:"
-    echo "Volume mount point: /user-scripts (fixed)"
-    local custom_mounts=$(get_config_value "custom_mounts" "")
-    if [[ -n "$custom_mounts" ]]; then
-      echo "Custom mounts:"
-      parse_custom_mounts "$custom_mounts" | while IFS=':' read -r host container mode; do
-        echo "  $host -> $container ($mode)"
-      done
-    else
-      echo "custom_mounts=[] (default)"
-    fi
+  echo "Current configuration (with sources):"
+  echo ""
+  
+  # General settings
+  echo "General settings:"
+  local default_image=$(get_config_value "default_image" "alpine")
+  local default_image_source=$(get_config_source "default_image")
+  echo "  default_image=$default_image  [$default_image_source]"
+  
+  echo ""
+  echo "Mount settings:"
+  echo "  Volume mount point: /user-scripts (fixed)"
+  
+  # Custom mounts
+  local custom_mounts=$(get_config_value "custom_mounts" "")
+  local custom_mounts_source=$(get_config_source "custom_mounts")
+  
+  if [[ -n "$custom_mounts" && "$custom_mounts" != "[]" ]]; then
+    echo "  custom_mounts:  [$custom_mounts_source]"
+    parse_custom_mounts "$custom_mounts" | while IFS=':' read -r host container mode; do
+      echo "    $host -> $container ($mode)"
+    done
   else
-    echo "No configuration file found. Using defaults."
+    echo "  custom_mounts=[]  [$custom_mounts_source]"
+  fi
+  
+  echo ""
+  echo "Configuration files:"
+  
+  # Check local config
+  local local_config
+  if local_config=$(find_local_config); then
+    echo "  Local config: $local_config (exists)"
+  else
+    echo "  Local config: ./$LOCAL_CONFIG_FILE (not found)"
+  fi
+  
+  # Check user config
+  if [[ -f "$CONFIG_FILE" ]]; then
+    echo "  User config: $CONFIG_FILE (exists)"
+  else
+    echo "  User config: $CONFIG_FILE (not found)"
   fi
 }
 
@@ -166,7 +326,7 @@ show_usage() {
   echo "  --list            List all container-here containers and their status"
   echo "  --attach NAME     Attach to existing container by name"
   echo "  --debug           Print the docker command instead of executing it"
-  echo "  --config          Show configuration management options"
+  echo "  --config          Manage configuration (set, get, list, which, sources)"
   echo "  view-scripts [OPTIONS]  View content of the scripts volume using temporary container"
   echo "    --alpine        Force use of Alpine image for viewing scripts"
   echo "    --image IMAGE   Use specific image for viewing scripts"
@@ -195,21 +355,40 @@ show_config_help() {
 
   echo "Configuration Management:"
   echo ""
-  echo "  $script_name --config set <key> <value>    Set a configuration value"
-  echo "  $script_name --config get <key>            Get a configuration value"
-  echo "  $script_name --config list                 List all configuration values"
+  echo "Commands:"
+  echo "  $script_name --config set [local|user] <key> <value>  Set a configuration value"
+  echo "  $script_name --config get <key>                       Get a configuration value"
+  echo "  $script_name --config list                            List all configuration values"
+  echo "  $script_name --config which <key>                     Show which config source provides a value"
+  echo "  $script_name --config sources                         List all config sources in precedence order"
   echo ""
-  echo "Available configuration keys:"
+  echo "Configuration keys:"
   echo "  default_image              Default Docker image to use (default: alpine)"
   echo "  custom_mounts              Custom mount definitions in JSON format"
   echo "                            Format: [{\"host\":\"/path\",\"container\":\"/path\",\"mode\":\"rw|ro\"}]"
   echo ""
+  echo "Configuration sources (highest to lowest priority):"
+  echo "  1. Command-line arguments (--image, --mount)"
+  echo "  2. Environment variables (CONTAINER_HERE_DEFAULT_IMAGE, CONTAINER_HERE_CUSTOM_MOUNTS)"
+  echo "  3. Local project config (.container-here.conf in current directory)"
+  echo "  4. User config (~/.config/container-here/config)"
+  echo "  5. Built-in defaults"
+  echo ""
   echo "Examples:"
+  echo "  # Set user config (default)"
   echo "  $script_name --config set default_image ubuntu:22.04"
-  echo "  $script_name --config get default_image"
-  echo "  $script_name --config set custom_mounts '[{\"host\":\"/data\",\"container\":\"/app/data\",\"mode\":\"rw\"}]'"
-  echo "  $script_name --config get custom_mounts"
-  echo "  $script_name --config list"
+  echo "  "
+  echo "  # Set local project config"
+  echo "  $script_name --config set local default_image node:18"
+  echo "  "
+  echo "  # Check which config provides a value"
+  echo "  $script_name --config which default_image"
+  echo "  "
+  echo "  # Override with environment variable"
+  echo "  CONTAINER_HERE_DEFAULT_IMAGE=python:3.11 $script_name"
+  echo "  "
+  echo "  # Set custom mounts in local config"
+  echo "  $script_name --config set local custom_mounts '[{\"host\":\"/data\",\"container\":\"/app/data\",\"mode\":\"rw\"}]'"
 }
 
 # Function to handle config commands
@@ -225,6 +404,19 @@ handle_config_command() {
       exit 1
     fi
     local key="$1"
+    local target="user"  # default target
+    
+    # Check for target specifier
+    if [[ "$key" == "local" || "$key" == "user" ]]; then
+      target="$key"
+      shift
+      key="$1"
+      if [[ -z "$key" ]]; then
+        echo "Error: config set requires a key after target"
+        echo "Usage: --config set [local|user] <key> <value>"
+        exit 1
+      fi
+    fi
 
     case "$key" in
     default_image)
@@ -234,8 +426,8 @@ handle_config_command() {
         exit 1
       fi
       local value="$2"
-      set_config_value "$key" "$value"
-      echo "Set $key = $value"
+      set_config_value "$key" "$value" "$target"
+      echo "Set $key = $value in $target config"
       ;;
 
     custom_mounts)
@@ -301,11 +493,36 @@ handle_config_command() {
   list)
     list_config
     ;;
+  which)
+    if [[ $# -lt 1 ]]; then
+      echo "Error: config which requires a key"
+      echo "Usage: --config which <key>"
+      exit 1
+    fi
+    local key="$1"
+    case "$key" in
+    default_image | custom_mounts)
+      local source=$(get_config_source "$key")
+      local value=$(get_config_value "$key" "")
+      echo "$key = $value"
+      echo "Source: $source"
+      ;;
     *)
       echo "Error: Unknown configuration key '$key'"
       echo "Available keys: default_image, custom_mounts"
       exit 1
       ;;
+    esac
+    ;;
+  sources)
+    list_config_sources
+    ;;
+  *)
+    echo "Error: Unknown config action '$action'"
+    echo "Available actions: set, get, list, which, sources"
+    show_config_help
+    exit 1
+    ;;
   esac
 }
 

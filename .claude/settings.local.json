@@ -6,7 +6,9 @@
       "Bash(find:*)",
       "Bash(./run-tests.sh)",
       "Bash(./container-here --config list)",
-      "Bash(./container-here --debug --mount $HOME/.claude:/home/ubuntu/.claude)"
+      "Bash(./container-here --debug --mount $HOME/.claude:/home/ubuntu/.claude)",
+      "Bash(./container-here --network test-network --network db-network --debug test-app)",
+      "Bash(./container-here --network bridge --debug test-app2)"
     ],
     "deny": []
   }

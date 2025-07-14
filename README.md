@@ -279,7 +279,15 @@ When a container with the same name already exists, you'll be prompted with opti
 
 ## Configuration
 
-Container Here supports persistent configuration through `~/.config/container-here/config`. You can set default values to avoid specifying them every time.
+Container Here supports multi-level configuration with clear precedence rules, allowing both project-specific and user-wide settings.
+
+### Configuration Hierarchy (Highest to Lowest Priority)
+
+1. **Command-line arguments** - Override all configurations
+2. **Environment variables** - Runtime overrides (e.g., `CONTAINER_HERE_DEFAULT_IMAGE`)
+3. **Local project config** - `.container-here.conf` in current directory
+4. **User config** - `~/.config/container-here/config`
+5. **Built-in defaults** - Hardcoded fallback values
 
 ### Configuration Management
 
@@ -291,35 +299,79 @@ Container Here supports persistent configuration through `~/.config/container-he
 ```
 Configuration Management:
 
-  container-here --config set <key> <value>    Set a configuration value
-  container-here --config get <key>            Get a configuration value
-  container-here --config list                 List all configuration values
+Commands:
+  container-here --config set [local|user] <key> <value>  Set a configuration value
+  container-here --config get <key>                       Get a configuration value
+  container-here --config list                            List all configuration values
+  container-here --config which <key>                     Show which config source provides a value
+  container-here --config sources                         List all config sources in precedence order
 
-Available configuration keys:
+Configuration keys:
   default_image              Default Docker image to use (default: alpine)
   custom_mounts              Custom mount definitions in JSON format
                             Format: [{"host":"/path","container":"/path","mode":"rw|ro"}]
 
 Examples:
+  # Set user config (default)
   container-here --config set default_image ubuntu:22.04
-  container-here --config get default_image
-  container-here --config set custom_mounts '[{"host":"/data","container":"/app/data","mode":"rw"}]'
-  container-here --config get custom_mounts
-  container-here --config list
+  
+  # Set local project config
+  container-here --config set local default_image node:18
+  
+  # Check which config provides a value
+  container-here --config which default_image
+  
+  # Override with environment variable
+  CONTAINER_HERE_DEFAULT_IMAGE=python:3.11 container-here
 ```
 
 #### Configuration Commands
 
 ```bash
-# Set default Docker image
+# Set user config (default)
 ./container-here --config set default_image ubuntu:22.04
 
-# Get current default image
+# Set local project config
+./container-here --config set local default_image node:18
+
+# Get current value (from any source)
 ./container-here --config get default_image
 
-# List all configuration values
+# Check which config source provides a value
+./container-here --config which default_image
+# Output: default_image = node:18
+#         Source: local (/path/to/project/.container-here.conf)
+
+# List all configuration sources
+./container-here --config sources
+
+# List all configuration values with their sources
 ./container-here --config list
 ```
+
+### Environment Variables
+
+Override any configuration value using environment variables:
+
+```bash
+# Override default image
+CONTAINER_HERE_DEFAULT_IMAGE=python:3.11 ./container-here my-app
+
+# Override custom mounts
+CONTAINER_HERE_CUSTOM_MOUNTS='[{"host":"/tmp","container":"/tmp","mode":"rw"}]' ./container-here
+```
+
+### Local Project Configuration
+
+Create a `.container-here.conf` file in your project root for project-specific settings:
+
+```bash
+# .container-here.conf
+default_image=node:18-alpine
+custom_mounts=[{"host":"./src","container":"/app/src","mode":"rw"},{"host":"./config","container":"/app/config","mode":"ro"}]
+```
+
+This file can be committed to version control, allowing team members to share the same container configuration.
 
 ### Available Configuration Keys
 
@@ -349,25 +401,48 @@ custom_mounts=[{"host":"/home/user/data","container":"/app/data","mode":"rw"},{"
 
 ### Configuration Workflow Examples
 
+#### Multi-Level Configuration Example
+
 ```bash
-# 1. Set your preferred defaults (one-time setup)
+# 1. Set user-wide defaults
 ./container-here --config set default_image ubuntu:22.04
-./container-here --config set custom_mounts '[{"host":"/home/user/data","container":"/app/data","mode":"rw"}]'
+./container-here --config set custom_mounts '[{"host":"/home/user/data","container":"/data","mode":"rw"}]'
 
-# 2. Verify the settings
-./container-here --config get default_image
-# Output: ubuntu:22.04
+# 2. Set project-specific overrides
+cd /path/to/nodejs-project
+./container-here --config set local default_image node:18-alpine
+./container-here --config set local custom_mounts '[{"host":"./src","container":"/app/src","mode":"rw"}]'
 
-./container-here --config get custom_mounts
-# Output: [{"host":"/home/user/data","container":"/app/data","mode":"rw"}]
+# 3. Check which configuration is active
+./container-here --config which default_image
+# Output: default_image = node:18-alpine
+#         Source: local (/path/to/nodejs-project/.container-here.conf)
 
-# 3. Now containers use the configured defaults automatically
-./container-here my-web-project                    # Uses ubuntu:22.04 with custom mounts
-./container-here --image alpine alpine-tools      # Uses alpine with custom mounts
-./container-here --mount /tmp/logs:/logs my-app    # Overrides config mounts with CLI mounts
-
-# 4. View all your settings
+# 4. List all configurations with sources
 ./container-here --config list
+# Output shows both local and user configs with source indicators
+
+# 5. Override with environment variable for one-off use
+CONTAINER_HERE_DEFAULT_IMAGE=python:3.11 ./container-here test-python
+
+# 6. View configuration hierarchy
+./container-here --config sources
+```
+
+#### Team Collaboration Example
+
+```bash
+# Project lead sets up local config
+echo 'default_image=node:18-alpine' > .container-here.conf
+echo 'custom_mounts=[{"host":"./src","container":"/app/src","mode":"rw"}]' >> .container-here.conf
+
+# Commit to version control
+git add .container-here.conf
+git commit -m "Add container configuration for team"
+
+# Team members automatically get the same environment
+git pull
+./container-here dev-env    # Uses project-specific configuration
 ```
 
 ## Volume Mounting
