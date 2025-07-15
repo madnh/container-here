@@ -7,7 +7,9 @@
       "Bash(./run-tests.sh)",
       "Bash(git commit:*)",
       "Bash(ls:*)",
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "Bash(timeout:*)",
+      "Bash(bats:*)"
     ],
     "deny": []
   }

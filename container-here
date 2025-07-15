@@ -696,6 +696,8 @@ show_usage() {
   echo "  --memory SIZE     Limit memory usage (e.g., 512m, 1g, 2G)"
   echo "  --list            List all container-here containers and their status"
   echo "  --attach NAME     Attach to existing container by name"
+  echo "  --stop NAME       Stop running container by name"
+  echo "  --remove NAME     Remove container by name (stops if running)"
   echo "  --debug           Print the docker command instead of executing it"
   echo "  --config          Manage configuration (defaults to local, use --global for user-wide)"
   echo "  view-scripts [OPTIONS]  View content of the scripts volume using temporary container"
@@ -722,6 +724,8 @@ show_usage() {
   echo "  $script_name --memory 512m my-app            # Limit to 512MB memory"
   echo "  $script_name --list                   # List all container-here containers"
   echo "  $script_name --attach my-app          # Attach to existing 'my-app' container"
+  echo "  $script_name --stop my-app            # Stop running 'my-app' container"
+  echo "  $script_name --remove my-app          # Remove 'my-app' container (stops if running)"
   echo "  $script_name view-scripts             # View content of scripts volume (uses config default or alpine)"
   echo "  $script_name view-scripts --alpine   # View scripts using Alpine image"
   echo "  $script_name view-scripts --image ubuntu:22.04  # View scripts using Ubuntu image"
@@ -1200,6 +1204,26 @@ parse_arguments() {
       attach_to_container "$1"
       exit 0
       ;;
+    --stop)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --stop requires a container name"
+        echo "Usage: container-here --stop <name>"
+        exit 1
+      fi
+      shift
+      stop_container "$1"
+      exit 0
+      ;;
+    --remove)
+      if [[ $# -eq 1 ]]; then
+        echo "Error: --remove requires a container name"
+        echo "Usage: container-here --remove <name>"
+        exit 1
+      fi
+      shift
+      remove_container "$1"
+      exit 0
+      ;;
     --debug)
       DEBUG_MODE=true
       shift
@@ -1381,6 +1405,8 @@ list_containers() {
   
   echo ""
   echo "To attach to a container: container-here --attach <name>"
+  echo "To stop a container: container-here --stop <name>"
+  echo "To remove a container: container-here --remove <name>"
   echo "To create a new container: container-here [name]"
 }
 
@@ -1420,6 +1446,98 @@ attach_to_container() {
   else
     echo "Starting and attaching to container '$base_name'..."
     docker start -ai "$container_name"
+  fi
+}
+
+# Function to stop existing container
+stop_container() {
+  local base_name="$1"
+  
+  if [ -z "$base_name" ]; then
+    echo "Error: --stop requires a container name"
+    echo "Usage: container-here --stop <name>"
+    echo ""
+    echo "Available containers:"
+    list_containers
+    exit 1
+  fi
+  
+  local container_name="container-here-$base_name"
+  
+  # Check if container exists
+  if ! docker ps -a --format "{{.Names}}" | grep -q "^$container_name$"; then
+    echo "Error: Container '$base_name' not found."
+    echo ""
+    echo "Available containers:"
+    list_containers
+    exit 1
+  fi
+  
+  # Check if container is running
+  if docker ps --format "{{.Names}}" | grep -q "^$container_name$"; then
+    echo "Stopping container '$base_name'..."
+    docker stop "$container_name"
+    if [ $? -eq 0 ]; then
+      echo "Container '$base_name' stopped successfully."
+    else
+      echo "Failed to stop container '$base_name'."
+      exit 1
+    fi
+  else
+    echo "Container '$base_name' is not running."
+  fi
+}
+
+# Function to remove existing container
+remove_container() {
+  local base_name="$1"
+  
+  if [ -z "$base_name" ]; then
+    echo "Error: --remove requires a container name"
+    echo "Usage: container-here --remove <name>"
+    echo ""
+    echo "Available containers:"
+    list_containers
+    exit 1
+  fi
+  
+  local container_name="container-here-$base_name"
+  
+  # Check if container exists
+  if ! docker ps -a --format "{{.Names}}" | grep -q "^$container_name$"; then
+    echo "Error: Container '$base_name' not found."
+    echo ""
+    echo "Available containers:"
+    list_containers
+    exit 1
+  fi
+  
+  # Check if container is running and offer to stop it
+  if docker ps --format "{{.Names}}" | grep -q "^$container_name$"; then
+    echo "Container '$base_name' is currently running."
+    echo "Do you want to stop it before removing? (y/n)"
+    read -r response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+      echo "Stopping container '$base_name'..."
+      docker stop "$container_name"
+      if [ $? -ne 0 ]; then
+        echo "Failed to stop container '$base_name'."
+        exit 1
+      fi
+    else
+      echo "Cannot remove running container. Use --stop first or answer 'y' to stop automatically."
+      exit 1
+    fi
+  fi
+  
+  # Remove the container
+  echo "Removing container '$base_name'..."
+  docker rm "$container_name"
+  if [ $? -eq 0 ]; then
+    echo "Container '$base_name' removed successfully."
+  else
+    echo "Failed to remove container '$base_name'."
+    exit 1
   fi
 }
 
@@ -1886,7 +2004,7 @@ fi
 if [[ "$DEBUG_MODE" == "true" ]]; then
   echo ""
   echo "Debug: Docker command that would be executed:"
-  echo "docker run -it \\"
+  echo "docker run -d \\"
   echo "  --name \"$CONTAINER_NAME\" \\"
   for arg in "${HOSTNAME_ARGS[@]}"; do
     echo "  \"$arg\" \\"
@@ -1903,14 +2021,38 @@ if [[ "$DEBUG_MODE" == "true" ]]; then
   for arg in "${RESOURCE_ARGS[@]}"; do
     echo "  \"$arg\" \\"
   done
-  echo "  \"$DOCKER_IMAGE\""
+  echo "  \"$DOCKER_IMAGE\" \\"
+  echo "  sleep infinity"
+  echo ""
+  echo "Then execute: docker exec -it \"$CONTAINER_NAME\" <detected_shell>"
 else
-  docker run -it \
+  # Run container in detached mode to persist even if user exits
+  # Use sleep infinity to keep container running
+  docker run -d \
     --name "$CONTAINER_NAME" \
     "${HOSTNAME_ARGS[@]}" \
     "${MOUNT_ARGS[@]}" \
     "${NETWORK_ARGS[@]}" \
     "${PORT_ARGS[@]}" \
     "${RESOURCE_ARGS[@]}" \
-    "$DOCKER_IMAGE"
+    "$DOCKER_IMAGE" \
+    sleep infinity
+  
+  # Check if container started successfully
+  if [ $? -eq 0 ]; then
+    echo "Container '$CONTAINER_NAME' started successfully."
+    
+    # Detect default shell and exec into container
+    echo "Connecting to container..."
+    SHELL_CMD=$(docker exec "$CONTAINER_NAME" sh -c 'echo $SHELL' 2>/dev/null || echo "/bin/bash")
+    if [ -z "$SHELL_CMD" ] || ! docker exec "$CONTAINER_NAME" test -x "$SHELL_CMD" 2>/dev/null; then
+      SHELL_CMD="/bin/bash"
+    fi
+    
+    # Execute interactive shell in the container
+    docker exec -it "$CONTAINER_NAME" "$SHELL_CMD"
+  else
+    echo "Failed to start container '$CONTAINER_NAME'"
+    exit 1
+  fi
 fi

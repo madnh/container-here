@@ -68,6 +68,13 @@ mock_docker_exec() {
 
 # Mock docker run command
 mock_docker_run() {
+    # Check if this is detached mode
+    if [[ "$*" == *"-d"* ]]; then
+        MOCK_RUN_DETACHED="true"
+    else
+        MOCK_RUN_DETACHED="false"
+    fi
+    
     if [[ "$*" == *"--name"* ]]; then
         # Extract container name from arguments
         local args=("$@")
@@ -94,8 +101,14 @@ mock_docker_run() {
         return 1
     fi
     
-    echo "Container created successfully"
-    return 0
+    if [[ "$MOCK_RUN_DETACHED" == "true" ]]; then
+        # In detached mode, return a container ID
+        echo "abc123def456"
+        return 0
+    else
+        echo "Container created successfully"
+        return 0
+    fi
 }
 
 # Mock docker rm command
@@ -108,6 +121,17 @@ mock_docker_rm() {
 mock_docker_start() {
     echo "Container started"
     return 0
+}
+
+# Mock docker stop command
+mock_docker_stop() {
+    if [[ "$MOCK_DOCKER_STOP_FAIL" == "true" ]]; then
+        echo "Error stopping container"
+        return 1
+    else
+        echo "Container stopped"
+        return 0
+    fi
 }
 
 # Mock docker image inspect command
@@ -201,6 +225,10 @@ docker() {
             shift
             mock_docker_start "$@"
             ;;
+        "stop")
+            shift
+            mock_docker_stop "$@"
+            ;;
         "image")
             case "$2" in
                 "inspect")
@@ -243,6 +271,8 @@ reset_docker_mocks() {
     unset MOCK_SHELL
     unset MOCK_SHELL_EXISTS
     unset MOCK_DOCKER_RUN_FAIL
+    unset MOCK_DOCKER_STOP_FAIL
+    unset MOCK_RUN_DETACHED
     unset MOCK_CREATED_CONTAINER
     unset MOCK_USED_IMAGE
     unset MOCK_IMAGE_EXISTS_LOCALLY
