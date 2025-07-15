@@ -1025,3 +1025,50 @@ The script is designed to be testable and maintainable:
 - Docker commands are mockable for unit tests
 - Test mode prevents script execution during testing
 - Comprehensive error handling and user feedback
+
+### Version Management
+
+The project includes a Makefile for version management and development workflows:
+
+```bash
+# Show current version
+make version
+
+# Bump version (patch, minor, major)
+make bump-patch    # 1.0.0 -> 1.0.1
+make bump-minor    # 1.0.0 -> 1.1.0
+make bump-major    # 1.0.0 -> 2.0.0
+
+# Create release with git tag
+make release
+
+# Development commands
+make test          # Run tests
+make install       # Install to /usr/local/bin
+make status        # Show git status and version info
+make clean         # Clean up backup files
+```
+
+### Auto-Update Feature
+
+Container-here includes an auto-update feature that checks for new versions:
+
+```bash
+# Check current version
+container-here --version
+
+# Manual upgrade
+container-here --upgrade
+
+# Skip auto-check for this run
+container-here --no-check
+
+# Disable auto-check globally
+container-here --config set auto_check_updates false
+```
+
+The auto-update feature:
+- Checks for updates once per day (rate limited)
+- Shows non-intrusive notifications when updates are available
+- Provides safe upgrade process with automatic backup
+- Can be disabled via configuration
