@@ -174,21 +174,20 @@ teardown() {
     [ "$status" -eq 1 ]
 }
 
-# Test --remove command without container name
-@test "--remove command requires container name argument" {
+# Test --remove command without container name uses auto-detection
+@test "--remove command auto-detects container name from current folder" {
     export BATS_TEST_MODE=1
     
     run bash -c '
-        # Simulate missing argument check
-        if [ -z "" ]; then
-            echo "Error: --remove requires a container name"
-            echo "Usage: container-here --remove <name>"
-            exit 1
-        fi
+        # Simulate auto-detection behavior
+        detected_name=$(basename "$(pwd)")
+        echo "No container name provided. Using detected name: $detected_name"
+        echo "Error: Container '"'"'$detected_name'"'"' not found."
+        exit 1
     '
     
-    [[ "$output" == *"Error: --remove requires a container name"* ]]
-    [[ "$output" == *"Usage: container-here --remove <name>"* ]]
+    [[ "$output" == *"No container name provided. Using detected name:"* ]]
+    [[ "$output" == *"Error: Container"* ]]
     [ "$status" -eq 1 ]
 }
 

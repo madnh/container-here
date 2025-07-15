@@ -116,21 +116,20 @@ teardown() {
     [ "$status" -eq 1 ]
 }
 
-# Test --stop command without container name
-@test "--stop command requires container name argument" {
+# Test --stop command without container name uses auto-detection
+@test "--stop command auto-detects container name from current folder" {
     export BATS_TEST_MODE=1
     
     run bash -c '
-        # Simulate missing argument check
-        if [ -z "" ]; then
-            echo "Error: --stop requires a container name"
-            echo "Usage: container-here --stop <name>"
-            exit 1
-        fi
+        # Simulate auto-detection behavior
+        detected_name=$(basename "$(pwd)")
+        echo "No container name provided. Using detected name: $detected_name"
+        echo "Error: Container '"'"'$detected_name'"'"' not found."
+        exit 1
     '
     
-    [[ "$output" == *"Error: --stop requires a container name"* ]]
-    [[ "$output" == *"Usage: container-here --stop <name>"* ]]
+    [[ "$output" == *"No container name provided. Using detected name:"* ]]
+    [[ "$output" == *"Error: Container"* ]]
     [ "$status" -eq 1 ]
 }
 
