@@ -1196,32 +1196,38 @@ parse_arguments() {
       ;;
     --attach)
       if [[ $# -eq 1 ]]; then
-        echo "Error: --attach requires a container name"
-        echo "Usage: container-here --attach <name>"
-        exit 1
+        # Auto-detect container name from current folder
+        local detected_name=$(basename "$(pwd)")
+        echo "No container name provided. Using detected name: $detected_name"
+        attach_to_container "$detected_name"
+      else
+        shift
+        attach_to_container "$1"
       fi
-      shift
-      attach_to_container "$1"
       exit 0
       ;;
     --stop)
       if [[ $# -eq 1 ]]; then
-        echo "Error: --stop requires a container name"
-        echo "Usage: container-here --stop <name>"
-        exit 1
+        # Auto-detect container name from current folder
+        local detected_name=$(basename "$(pwd)")
+        echo "No container name provided. Using detected name: $detected_name"
+        stop_container "$detected_name"
+      else
+        shift
+        stop_container "$1"
       fi
-      shift
-      stop_container "$1"
       exit 0
       ;;
     --remove)
       if [[ $# -eq 1 ]]; then
-        echo "Error: --remove requires a container name"
-        echo "Usage: container-here --remove <name>"
-        exit 1
+        # Auto-detect container name from current folder
+        local detected_name=$(basename "$(pwd)")
+        echo "No container name provided. Using detected name: $detected_name"
+        remove_container "$detected_name"
+      else
+        shift
+        remove_container "$1"
       fi
-      shift
-      remove_container "$1"
       exit 0
       ;;
     --debug)
