@@ -9,6 +9,7 @@ Quick create container with auto mount working dir.
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Usage](#usage)
+- [IDE Integration](#ide-integration)
 - [Configuration](#configuration)
 - [Resource Management](#resource-management)
 - [Command Line Reference](#command-line-reference)
@@ -90,6 +91,7 @@ container-here --help
 - **🔗 Quick Reconnection**: Attach to any existing container with `--attach` command
 - **📊 Status Monitoring**: View all containers with their status and mounted directories
 - **🐚 Shell Detection**: Automatically detects and uses container's configured shell
+- **💻 IDE Integration**: Open VSCode, Cursor, WebStorm, or PHPStorm connected to containers
 
 ## Usage
 
@@ -121,6 +123,10 @@ Options:
   --memory SIZE     Limit memory usage (e.g., 512m, 1g, 2G)
   --list            List all container-here containers and their status
   --attach NAME     Attach to existing container by name
+  --vscode NAME     Open VSCode connected to container by name
+  --cursor NAME     Open Cursor connected to container by name
+  --webstorm NAME   Open WebStorm connected to container by name
+  --phpstorm NAME   Open PHPStorm connected to container by name
   --config          Show configuration management options
   view-scripts [OPTIONS]  View content of the scripts volume using temporary container
     --alpine        Force use of Alpine image for viewing scripts
@@ -142,6 +148,10 @@ Examples:
   container-here --memory 512m my-app            # Limit to 512MB memory
   container-here --list                   # List all container-here containers
   container-here --attach my-app          # Attach to existing 'my-app' container
+  container-here --vscode my-app          # Open VSCode connected to 'my-app' container
+  container-here --cursor my-app          # Open Cursor connected to 'my-app' container
+  container-here --webstorm my-app        # Open WebStorm connected to 'my-app' container
+  container-here --phpstorm my-app        # Open PHPStorm connected to 'my-app' container
   container-here view-scripts             # View content of scripts volume (uses config default or alpine)
   container-here view-scripts --alpine   # View scripts using Alpine image
   container-here view-scripts --image ubuntu:22.04  # View scripts using Ubuntu image
@@ -196,6 +206,143 @@ Examples:
 ./container-here view-scripts
 ```
 
+## IDE Integration
+
+Container Here provides seamless integration with popular IDEs, allowing you to open your favorite editor directly connected to running containers.
+
+### Supported IDEs
+
+- **VSCode**: Full Dev Containers support with remote development
+- **Cursor**: VSCode-based AI editor with container support
+- **WebStorm**: JetBrains IDE for JavaScript/TypeScript development
+- **PHPStorm**: JetBrains IDE for PHP development
+
+### Using IDE Integration
+
+#### VSCode Integration
+
+```bash
+# Open VSCode connected to container
+./container-here --vscode my-app
+
+# Auto-detect container name from current directory
+./container-here --vscode
+```
+
+VSCode will open with the container attached using the Dev Containers extension. The editor will have full access to the container's filesystem and can run commands inside the container.
+
+**Requirements**:
+- VSCode installed with `code` command in PATH
+- Dev Containers extension installed
+
+#### Cursor Integration
+
+```bash
+# Open Cursor connected to container
+./container-here --cursor my-app
+
+# Auto-detect container name
+./container-here --cursor
+```
+
+Cursor uses the same Dev Containers protocol as VSCode, providing full container integration.
+
+**Requirements**:
+- Cursor installed with `cursor` command in PATH
+- Dev Containers extension installed
+
+#### JetBrains IDE Integration (WebStorm/PHPStorm)
+
+```bash
+# Open WebStorm with project directory
+./container-here --webstorm my-app
+
+# Open PHPStorm with project directory
+./container-here --phpstorm my-app
+```
+
+JetBrains IDEs open the local project directory and provide instructions for connecting to the Docker container:
+
+1. Use the Docker plugin in the IDE
+2. Configure remote interpreter using the container
+3. Or use File > Remote Development > Docker for full remote development
+
+**Requirements**:
+- JetBrains Toolbox or standalone IDE installation
+- IDE command (`webstorm` or `phpstorm`) in PATH
+- Docker plugin installed in the IDE
+
+### IDE Workflow Examples
+
+#### Full-Stack Development with VSCode
+
+```bash
+# Create frontend container and open in VSCode
+./container-here --image node:18 frontend
+./container-here --vscode frontend
+
+# Create backend container and open in another VSCode window
+./container-here --image python:3.11 backend
+./container-here --vscode backend
+```
+
+#### PHP Development with PHPStorm
+
+```bash
+# Create PHP development container
+./container-here --image php:8.2-cli --port 8080:80 php-app
+
+# Open PHPStorm connected to the container
+./container-here --phpstorm php-app
+
+# PHPStorm opens with instructions to:
+# 1. Configure Docker as remote interpreter
+# 2. Set up deployment path mappings
+# 3. Enable Docker compose integration
+```
+
+#### Quick Editor Switching
+
+```bash
+# Start with VSCode
+./container-here --vscode my-project
+
+# Later, switch to Cursor for AI assistance
+./container-here --cursor my-project
+
+# Or use WebStorm for better JavaScript debugging
+./container-here --webstorm my-project
+```
+
+### Technical Details
+
+#### VSCode/Cursor Connection
+- Uses the `vscode-remote://attached-container+{HEX_ENCODED_NAME}/app` URI format
+- Container name is hex-encoded for URI compatibility
+- Automatically starts container if not running
+
+#### JetBrains Connection
+- Opens the local project directory
+- Provides instructions for Docker integration
+- Supports remote development through JetBrains Gateway
+
+### Adding New IDE Support
+
+The architecture is designed to easily add new IDEs. To add support for a new IDE:
+
+1. Add the CLI option in the argument parser
+2. Add a case in the `open_container_with_tool` function
+3. Implement the `open_tool_<ide_name>` function
+
+Example for adding IntelliJ IDEA:
+
+```bash
+# In the script, you would add:
+# 1. --idea option in parse_arguments
+# 2. idea) case in open_container_with_tool
+# 3. open_tool_jetbrains "idea" function call
+```
+
 ## Command Line Reference
 
 ### Main Options
@@ -216,6 +363,10 @@ Examples:
   - Example: `--port 8080:80` or `--port 8080:80:tcp`
 - `--list`: List all container-here containers with status and mounted directories
 - `--attach NAME`: Attach to existing container by name (starts if stopped)
+- `--vscode NAME`: Open VSCode connected to container by name
+- `--cursor NAME`: Open Cursor connected to container by name
+- `--webstorm NAME`: Open WebStorm connected to container by name
+- `--phpstorm NAME`: Open PHPStorm connected to container by name
 - `--config`: Show configuration management options or manage settings
 - `view-scripts [OPTIONS]`: View content of the scripts volume using temporary container
   - `--alpine`: Force use of Alpine image for viewing scripts
